@@ -57,6 +57,10 @@ impl ObjectByteStream {
 /// Async writer for one object.
 pub struct ObjectWrite {
     inner: BufWriter,
+    /// Set once `poll_shutdown` has been called. The buffered writer completes
+    /// the object during shutdown and does not accept flushes after it
+    /// begins.
+    shutting_down: bool,
 }
 
 impl ObjectWrite {
@@ -68,7 +72,10 @@ impl ObjectWrite {
         let location = resolve(url)?;
         let inner = BufWriter::with_capacity(location.store, location.path, PART_BYTES)
             .with_max_concurrency(MAX_CONCURRENT_PARTS);
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            shutting_down: false,
+        })
     }
 }
 
@@ -81,12 +88,21 @@ impl AsyncWrite for ObjectWrite {
         Pin::new(&mut self.inner).poll_write(cx, buf)
     }
 
+    /// Flush buffered bytes into the upload.
+    ///
+    /// Once shutdown has begun, the remaining bytes are uploaded by shutdown
+    /// itself and flushing does nothing. Writers that flush before each
+    /// shutdown poll, such as `GTableSink`, depend on this.
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.shutting_down {
+            return Poll::Ready(Ok(()));
+        }
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
     /// Complete the object, uploading any buffered bytes.
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.shutting_down = true;
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }

@@ -7,9 +7,14 @@
 //! # Object storage connections
 //!
 //! Resolves object URLs to a store and an object path. Stores are built
-//! once per bucket and option set and cached for the life of the process,
-//! keeping HTTP connection pools and credentials shared across every
-//! reader and writer that addresses the same bucket.
+//! once per bucket, option set and Tokio runtime, and cached for the life of
+//! the process. Readers and writers that address the same bucket from the
+//! same runtime share one HTTP connection pool and one set of credentials.
+//!
+//! The runtime forms part of the cache key because an HTTP client's pooled
+//! connections are driven by tasks on the runtime that opened them. A store
+//! reused from another runtime fails its requests once the original runtime
+//! has shut down.
 //!
 //! Options registered for a URL prefix apply to every URL beneath it. The
 //! longest registered prefix that matches a URL supplies its options.
@@ -24,6 +29,7 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
 use object_store::{ObjectStore, ObjectStoreScheme};
+use tokio::runtime::Handle;
 use url::Url;
 
 use crate::object_storage::error::io_error;
@@ -37,7 +43,8 @@ const OBJECT_SCHEMES: &[&str] = &[
 static OPTIONS: LazyLock<RwLock<Vec<(String, Vec<(String, String)>)>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
 
-/// Stores built so far, keyed by scheme, bucket and matched option prefix.
+/// Stores built so far, keyed by scheme, bucket, matched option prefix and
+/// Tokio runtime.
 static STORES: LazyLock<Mutex<HashMap<String, Arc<dyn ObjectStore>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -127,8 +134,11 @@ pub(crate) fn resolve(url: &str) -> io::Result<ObjectLocation> {
     }
 
     let (prefix, options) = registered_options(url);
+    let runtime = Handle::try_current()
+        .map(|handle| handle.id().to_string())
+        .unwrap_or_default();
     let key = format!(
-        "{}://{}|{prefix}",
+        "{}://{}|{prefix}|{runtime}",
         parsed.scheme(),
         parsed.host_str().unwrap_or("")
     );

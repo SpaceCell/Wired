@@ -95,6 +95,12 @@ fn parallel_chunk_writes_reach_the_object_prefix() {
     run(checks::parquet::parallel_chunk_writes_reach_the_object_prefix);
 }
 
+#[cfg(feature = "parquet")]
+#[test]
+fn chunked_parquet_loads_as_a_super_table() {
+    run(checks::parquet::chunked_parquet_loads_as_a_super_table);
+}
+
 #[test]
 fn chunked_arrow_round_trips_beneath_an_object_prefix() {
     run(checks::arrow_chunks::chunked_arrow_round_trips_beneath_an_object_prefix);

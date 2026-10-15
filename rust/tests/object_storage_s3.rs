@@ -195,6 +195,16 @@ fn parallel_chunk_writes_reach_the_object_prefix() {
     );
 }
 
+#[cfg(feature = "parquet")]
+#[test]
+#[ignore = "requires LIGHTSTREAM_S3_URL and AWS credentials"]
+fn chunked_parquet_loads_as_a_super_table() {
+    run(
+        "super-table",
+        checks::parquet::chunked_parquet_loads_as_a_super_table,
+    );
+}
+
 #[test]
 #[ignore = "requires LIGHTSTREAM_S3_URL and AWS credentials"]
 fn chunked_arrow_round_trips_beneath_an_object_prefix() {

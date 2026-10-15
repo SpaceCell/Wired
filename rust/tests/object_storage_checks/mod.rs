@@ -244,6 +244,29 @@ pub mod parquet {
         let tables: Vec<Table> = reader.map(|chunk| chunk.unwrap()).collect();
         assert_eq!(ids(&tables), (0..30).collect::<Vec<_>>());
     }
+
+    pub fn chunked_parquet_loads_as_a_super_table(base: &str) {
+        let dir = format!("{base}/chunked-parquet/super-table");
+        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        for first in [0, 10, 20, 30] {
+            writer.write_chunk(&sample_table(first, 10)).unwrap();
+        }
+
+        let sequential = ChunkedParquetReader::open(&dir, "trades", ())
+            .unwrap()
+            .load_batched()
+            .unwrap();
+        let parallel = ChunkedParquetReader::par_load_batched(&dir, "trades", (), Some(3)).unwrap();
+        for super_table in [sequential, parallel] {
+            assert_eq!(super_table.batches.len(), 4);
+            let batches: Vec<Table> = super_table
+                .batches
+                .iter()
+                .map(|batch| (**batch).clone())
+                .collect();
+            assert_eq!(ids(&batches), (0..40).collect::<Vec<_>>());
+        }
+    }
 }
 
 pub mod arrow_chunks {
