@@ -15,6 +15,10 @@
 //! outside the async executor. The async checks run inside a
 //! multi-threaded runtime and call the synchronous readers through
 //! `spawn_blocking`.
+//!
+//! The `cloud` module runs the checks against a real bucket for the
+//! ignored per-backend tests, with a unique run prefix per check that is
+//! deleted afterwards.
 
 #![allow(dead_code)]
 
@@ -376,5 +380,120 @@ pub mod json {
         let mut reader = JsonReader::from_path(&url, JsonFormat::Ndjson, decode, 1_000).unwrap();
         let table = reader.next_batch().unwrap().expect("one batch");
         assert_eq!(ids(&[table]), (0..12).collect::<Vec<_>>());
+    }
+}
+
+/// Runs the checks against a cloud bucket.
+///
+/// Each backend's test file supplies the prefix of its `LIGHTSTREAM_*`
+/// environment variables and a function that builds its store from the
+/// backend's own environment configuration. The variables are:
+///
+/// - `<prefix>_URL`: bucket or container URL with an optional path.
+/// - `<prefix>_MAX_CONCURRENT_PARTS`: optional `max_concurrent_parts`
+///   upload setting.
+/// - `<prefix>_PART_SIZE`: optional `part_size` upload setting, in bytes.
+///
+/// Each check writes beneath its own run prefix,
+/// `<prefix>_URL/lightstream-test-<process>-<time>/<check>`, and the run
+/// prefix is deleted when the check finishes, whether it passes or fails.
+pub mod cloud {
+    use std::env;
+    use std::future::Future;
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+    use std::process;
+    use std::sync::Once;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use futures_util::{FutureExt, TryStreamExt};
+    use lightstream::object_storage::register_options;
+    use object_store::{ObjectStore, ObjectStoreExt, ObjectStoreScheme};
+    use url::Url;
+
+    use super::runtime;
+
+    /// Builds a backend's store for an object URL from the backend's
+    /// environment configuration.
+    pub type StoreBuilder = fn(&str) -> Box<dyn ObjectStore>;
+
+    /// Register the optional upload settings from the environment for the
+    /// bucket URL, once per process.
+    fn register_upload_settings(env_prefix: &str, url: &str) {
+        static REGISTERED: Once = Once::new();
+        REGISTERED.call_once(|| {
+            let settings: Vec<(&str, String)> = [
+                ("max_concurrent_parts", "MAX_CONCURRENT_PARTS"),
+                ("part_size", "PART_SIZE"),
+            ]
+            .into_iter()
+            .filter_map(|(key, suffix)| {
+                env::var(format!("{env_prefix}_{suffix}"))
+                    .ok()
+                    .map(|value| (key, value))
+            })
+            .collect();
+            let options: Vec<(&str, &str)> = settings
+                .iter()
+                .map(|(key, value)| (*key, value.as_str()))
+                .collect();
+            register_options(url, &options).unwrap();
+        });
+    }
+
+    /// Base object URL for one check, unique to this process and start time.
+    fn check_base(env_prefix: &str, check: &str) -> String {
+        let variable = format!("{env_prefix}_URL");
+        let url =
+            env::var(&variable).unwrap_or_else(|_| panic!("{variable} is not set to a bucket URL"));
+        register_upload_settings(env_prefix, &url);
+        let started = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!(
+            "{}/lightstream-test-{}-{started}/{check}",
+            url.trim_end_matches('/'),
+            process::id()
+        )
+    }
+
+    /// Delete every object beneath `base`.
+    async fn delete_prefix(store: StoreBuilder, base: &str) {
+        let url = Url::parse(base).unwrap();
+        let (_, prefix) = ObjectStoreScheme::parse(&url).unwrap();
+        let store = store(base);
+        let objects: Vec<_> = store.list(Some(&prefix)).try_collect().await.unwrap();
+        for meta in objects {
+            store.delete(&meta.location).await.unwrap();
+        }
+    }
+
+    /// Run a synchronous check on the test thread, inside an entered
+    /// runtime, then delete its objects.
+    pub fn run(env_prefix: &str, store: StoreBuilder, name: &str, check: fn(&str)) {
+        let base = check_base(env_prefix, name);
+        let runtime = runtime();
+        let result = {
+            let _entered = runtime.enter();
+            catch_unwind(AssertUnwindSafe(|| check(&base)))
+        };
+        runtime.block_on(delete_prefix(store, &base));
+        if let Err(panic) = result {
+            resume_unwind(panic);
+        }
+    }
+
+    /// Run an async check, then delete its objects.
+    pub async fn run_async<F, Fut>(env_prefix: &str, store: StoreBuilder, name: &str, check: F)
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let base = check_base(env_prefix, name);
+        let result = AssertUnwindSafe(check(base.clone())).catch_unwind().await;
+        delete_prefix(store, &base).await;
+        if let Err(panic) = result {
+            resume_unwind(panic);
+        }
     }
 }
