@@ -1,4 +1,4 @@
-# Lightstream
+# SpaceCell Wired
 
 **Send and receive typed Arrow and Protobuf data easily across networks and processes at speed.**
 
@@ -152,7 +152,7 @@ for frame in reader:
         on_health(frame.payload)
 ```
 
-## Why Lightstream exists
+## Why it exists
 
 Moving bytes between processes is easy. Sending and receiving **typed tabular data, typed messages and metadata together, at high throughput, across interchangeable transports** typically needs many custom engineering hours, and it is work that’s difficult to get right.
 
@@ -171,11 +171,11 @@ That protocol becomes another thing to implement, benchmark and maintain. More i
 
 So why not bake that in?
 
-Lightstream provides that layer highly optimised, out of the box reusable and interchangeable. Don’t like the bread? It’s composable, so you can pick it up at the layer that works for your problem.
+SpaceCell Wired provides that layer highly optimised, out of the box reusable and interchangeable. Don’t like the bread? It’s composable, so you can pick it up at the layer that works for your problem.
 
-## What Lightstream does
+## What it does
 
-Lightstream separates **data encoding**, **reading and writing**, and **transport**, so each can be switched independently without rebuilding the data path.
+SpaceCell Wired separates **data encoding**, **reading and writing**, and **transport**, so each can be switched independently without rebuilding the data path.
 
 It gives you:
 
@@ -213,13 +213,13 @@ wss://feed.example.com/stream
 stdio://
 ```
 
-In summary, Lightstream is **one typed, high-performance streaming layer across files, processes and networks** without complicated systems in-between.
+In summary, SpaceCell Wired is **one typed, high-performance streaming layer across files, processes and networks** without all the DIY steps in-between.
 
-For the killer compute layer that pairs with it, checkout [SpaceCell Lightning](http://www.spacecell.com).
+For the compute layer that pairs with it, checkout [SpaceCell Lightning](http://www.spacecell.com).
 
 ## Performance
 
-Lightstream performed faster than an industry-standard alternative in every measured comparison on open AWS EC2 benchmarks (see `benchmarks/`). This includes returning a single globally ordered stream after parallelising connections for delivery, which the other measured framework does not offer natively, and wearing that cost in the reported figures.
+Wired's Lightstream protocol performed faster than an industry-standard alternative in every measured comparison on open AWS EC2 benchmarks (see `benchmarks/`). This includes returning a single globally ordered stream after parallelising connections for delivery, which the other measured framework does not offer natively, and wearing that cost in the reported figures.
 
 ![Throughput across levels of core-based streaming parallelism against a variety of tabular workload shapes. Lightstream leads Arrow Flight in every combination.](assets/throughput-vs-parallelism.png)
 
@@ -263,4 +263,4 @@ Mozilla Public License 2.0. © 2025–2026 Peter Garfield Bower.
 
 See [MPL 2.0 FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/) if you are unfamiliar with this open-source licence.
 
-**Lightstream** is maintained by ***SpaceCell***. Check out some of the [latest data technology](https://spacecell.com).
+**Wired** is maintained by ***SpaceCell***. Check out some of the [latest data technology](https://spacecell.com).
