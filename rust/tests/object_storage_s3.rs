@@ -19,6 +19,8 @@
 //! | `AWS_REGION` | Bucket region |
 //! | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Credentials |
 //! | `AWS_ENDPOINT` | Optional endpoint for S3-compatible stores |
+//! | `LIGHTSTREAM_S3_MAX_CONCURRENT_PARTS` | Optional `max_concurrent_parts` upload setting |
+//! | `LIGHTSTREAM_S3_PART_SIZE` | Optional `part_size` upload setting, in bytes |
 //!
 //! Each check writes beneath its own run prefix,
 //! `<LIGHTSTREAM_S3_URL>/lightstream-test-<process>-<time>/<check>`, and
@@ -33,18 +35,44 @@ use std::env;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::process;
+use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::{FutureExt, TryStreamExt};
+use lightstream::object_storage::register_options;
 use object_storage_checks as checks;
 use object_store::aws::AmazonS3Builder;
 use object_store::{ObjectStore, ObjectStoreExt, ObjectStoreScheme};
 use url::Url;
 
+/// Register the optional upload settings from the environment for the
+/// bucket URL, once per process.
+fn register_upload_settings(url: &str) {
+    static REGISTERED: Once = Once::new();
+    REGISTERED.call_once(|| {
+        let settings: Vec<(&str, String)> = [
+            (
+                "max_concurrent_parts",
+                "LIGHTSTREAM_S3_MAX_CONCURRENT_PARTS",
+            ),
+            ("part_size", "LIGHTSTREAM_S3_PART_SIZE"),
+        ]
+        .into_iter()
+        .filter_map(|(key, variable)| env::var(variable).ok().map(|value| (key, value)))
+        .collect();
+        let options: Vec<(&str, &str)> = settings
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+        register_options(url, &options).unwrap();
+    });
+}
+
 /// Base object URL for one check, unique to this process and start time.
 fn check_base(check: &str) -> String {
     let url = env::var("LIGHTSTREAM_S3_URL")
         .expect("LIGHTSTREAM_S3_URL is not set, e.g. s3://bucket/prefix");
+    register_upload_settings(&url);
     let started = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()

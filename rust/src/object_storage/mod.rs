@@ -44,6 +44,15 @@
 //! where the platform provides one. Options for a bucket or prefix are set
 //! with [`register_options`], and apply to every URL beneath that prefix.
 //!
+//! ## Uploads and timeouts
+//! Objects larger than one part upload as multipart uploads, with
+//! `part_size` bytes per part and up to `max_concurrent_parts` parts in
+//! flight. Both are registered options, defaulting to
+//! [`DEFAULT_PART_SIZE`] and [`DEFAULT_MAX_CONCURRENT_PARTS`]. Requests have
+//! no limit on their total duration unless a `timeout` option is set, and
+//! large parts therefore complete over slow links. Connection attempts are
+//! still bounded by the client's `connect_timeout`.
+//!
 //! ## Runtime
 //! Object storage I/O runs on the caller's Tokio runtime. The async adapters
 //! in `models::streams::object_store` await their requests. The synchronous
@@ -64,10 +73,11 @@ mod error;
 mod runtime;
 mod upload;
 
-pub use connection::{ObjectLocation, register_options};
+pub use connection::{
+    DEFAULT_MAX_CONCURRENT_PARTS, DEFAULT_PART_SIZE, ObjectLocation, register_options,
+};
 pub use upload::ObjectUpload;
 
 pub(crate) use connection::{object_url, resolve};
 pub(crate) use error::io_error;
 pub(crate) use runtime::current_handle;
-pub(crate) use upload::{MAX_CONCURRENT_PARTS, PART_BYTES};

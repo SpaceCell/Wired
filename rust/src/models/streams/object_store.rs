@@ -30,7 +30,7 @@ use tokio::io::AsyncWrite;
 
 use crate::enums::BufferChunkSize;
 use crate::models::streams::async_read::AsyncReadByteStream;
-use crate::object_storage::{MAX_CONCURRENT_PARTS, PART_BYTES, io_error, resolve};
+use crate::object_storage::{io_error, resolve};
 
 /// Chunked byte stream over one object.
 pub type ObjectByteStream = AsyncReadByteStream<BufReader>;
@@ -70,8 +70,8 @@ impl ObjectWrite {
     /// down.
     pub fn create(url: &str) -> io::Result<Self> {
         let location = resolve(url)?;
-        let inner = BufWriter::with_capacity(location.store, location.path, PART_BYTES)
-            .with_max_concurrency(MAX_CONCURRENT_PARTS);
+        let inner = BufWriter::with_capacity(location.store, location.path, location.part_size)
+            .with_max_concurrency(location.max_concurrent_parts);
         Ok(Self {
             inner,
             shutting_down: false,

@@ -7,7 +7,8 @@
 //! # Object uploads
 //!
 //! Streaming upload of one object from synchronous writes. Written bytes
-//! are buffered up to one part. An object that never fills a part is
+//! are buffered up to one part, of the size registered for the object's URL
+//! (see [`crate::object_storage::register_options`]). An object that never fills a part is
 //! uploaded with a single request when it completes. Larger objects start a
 //! multipart upload when the first part fills, and each part uploads on the
 //! caller's Tokio runtime while writing continues, which bounds memory to
@@ -27,15 +28,6 @@ use tokio::task::JoinHandle;
 use crate::object_storage::connection::ObjectLocation;
 use crate::object_storage::error::io_error;
 use crate::object_storage::runtime::current_handle;
-
-/// Size of each multipart upload part, and the size above which an object
-/// switches from a single request to a multipart upload. Matches the S3
-/// minimum part size, which the other backends accept.
-pub(crate) const PART_BYTES: usize = 5 * 1024 * 1024;
-
-/// Upper bound on concurrent part uploads per object. Writes wait for the
-/// oldest part to complete once this many are in flight.
-pub(crate) const MAX_CONCURRENT_PARTS: usize = 8;
 
 /// Upload of one object, driven by synchronous writes.
 ///
@@ -98,8 +90,8 @@ impl ObjectUpload {
         }
         self.pending.extend_from_slice(buf);
         self.written += buf.len() as u64;
-        while self.pending.len() >= PART_BYTES {
-            let rest = self.pending.split_off(PART_BYTES);
+        while self.pending.len() >= self.location.part_size {
+            let rest = self.pending.split_off(self.location.part_size);
             let part = mem::replace(&mut self.pending, rest);
             if let Err(error) = self.send_part(part) {
                 self.abort();
@@ -172,7 +164,10 @@ impl ObjectUpload {
                 .map_err(io_error)?;
             self.multipart = Some(upload);
         }
-        if self.parts.len() >= MAX_CONCURRENT_PARTS {
+        // Wait for the oldest part once the registered number of parts is in
+        // flight, which bounds memory and shares the upload bandwidth across
+        // fewer requests.
+        if self.parts.len() >= self.location.max_concurrent_parts {
             let oldest = self.parts.pop_front().expect("parts in flight");
             await_part(&self.runtime, oldest)?;
         }

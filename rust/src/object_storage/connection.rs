@@ -22,17 +22,38 @@
 //! options to later URLs.
 
 use std::collections::HashMap;
+#[cfg(any(feature = "aws", feature = "gcp", feature = "azure"))]
+use std::env;
 use std::io;
 use std::path::Path;
+#[cfg(any(feature = "aws", feature = "gcp", feature = "azure"))]
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
+#[cfg(any(feature = "aws", feature = "gcp", feature = "azure"))]
+use object_store::{ClientConfigKey, ClientOptions};
 use object_store::{ObjectStore, ObjectStoreScheme};
 use tokio::runtime::Handle;
 use url::Url;
 
 use crate::object_storage::error::io_error;
+
+/// Default size of each multipart upload part, in bytes. S3 requires every
+/// part except the last to be at least this size, and it is the minimum
+/// accepted for `part_size`.
+pub const DEFAULT_PART_SIZE: usize = 5 * 1024 * 1024;
+
+/// Default number of parts uploaded concurrently per object.
+pub const DEFAULT_MAX_CONCURRENT_PARTS: usize = 8;
+
+/// Registered option key for the multipart upload part size, in bytes.
+const PART_SIZE_KEY: &str = "part_size";
+
+/// Registered option key for the number of parts uploaded concurrently per
+/// object.
+const MAX_CONCURRENT_PARTS_KEY: &str = "max_concurrent_parts";
 
 /// URL schemes routed to object storage. Every other path is a local path.
 const OBJECT_SCHEMES: &[&str] = &[
@@ -52,26 +73,44 @@ static STORES: LazyLock<Mutex<HashMap<String, Arc<dyn ObjectStore>>>> =
 /// store cache, which keeps its contents when options are registered.
 static MEMORY: LazyLock<Arc<dyn ObjectStore>> = LazyLock::new(|| Arc::new(InMemory::new()));
 
-/// One object or prefix within a store, resolved from an object URL.
+/// One object or prefix within a store, resolved from an object URL, with
+/// the upload settings registered for it.
 #[derive(Debug, Clone)]
 pub struct ObjectLocation {
     pub(crate) store: Arc<dyn ObjectStore>,
     pub(crate) path: ObjectPath,
+    /// Size of each multipart upload part, in bytes.
+    pub(crate) part_size: usize,
+    /// Number of parts uploaded concurrently per object.
+    pub(crate) max_concurrent_parts: usize,
 }
 
 /// Set the options used for every object URL beneath `prefix`.
 ///
 /// `prefix` is an object URL such as `s3://telemetry` or
-/// `s3://telemetry/lightning`. `options` are backend configuration keys and
-/// values, for example `aws_region`, `aws_access_key_id`, `aws_endpoint` or
-/// `google_service_account`, and replace any options registered earlier for
-/// the same prefix. Options not given here are read by the backend from its
-/// standard environment variables.
+/// `s3://telemetry/lightning`. The options replace any registered earlier
+/// for the same prefix, and are of two kinds:
+///
+/// - Upload settings, applied by lightstream to every backend:
+///   - `part_size`: size of each multipart upload part in bytes. Defaults to
+///     [`DEFAULT_PART_SIZE`], which is also the minimum.
+///   - `max_concurrent_parts`: parts uploaded concurrently per object.
+///     Defaults to [`DEFAULT_MAX_CONCURRENT_PARTS`]. Lower values suit links
+///     with little upload bandwidth.
+/// - Backend configuration keys, for example `aws_region`,
+///   `aws_access_key_id`, `aws_endpoint` or `google_service_account`, and the
+///   HTTP client keys such as `timeout`, `connect_timeout` and
+///   `http1_only`. Options not given here are read by the backend from its
+///   standard environment variables.
+///
+/// Requests have no limit on their total duration unless `timeout` is set,
+/// which lets large parts upload over slow links. Connections that cannot
+/// be established fail after the client's `connect_timeout`.
 ///
 /// ## Errors
-/// Returns `ErrorKind::InvalidInput` when `prefix` is not an object URL.
-/// Unknown option keys are reported when a URL beneath the prefix is first
-/// opened.
+/// Returns `ErrorKind::InvalidInput` when `prefix` is not an object URL or an
+/// upload setting is invalid. Unknown backend keys are reported when a URL
+/// beneath the prefix is first opened.
 pub fn register_options(prefix: &str, options: &[(&str, &str)]) -> io::Result<()> {
     if object_url(Path::new(prefix)).is_none() {
         return Err(io::Error::new(
@@ -80,10 +119,11 @@ pub fn register_options(prefix: &str, options: &[(&str, &str)]) -> io::Result<()
         ));
     }
     let prefix = prefix.trim_end_matches('/').to_string();
-    let options = options
+    let options: Vec<(String, String)> = options
         .iter()
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect();
+    upload_settings(&options)?;
     {
         let mut registered = OPTIONS.write().expect("object storage options lock");
         registered.retain(|(existing, _)| *existing != prefix);
@@ -126,14 +166,17 @@ pub(crate) fn resolve(url: &str) -> io::Result<ObjectLocation> {
         )
     })?;
     let (scheme, path) = ObjectStoreScheme::parse(&parsed).map_err(|e| io_error(e.into()))?;
+    let (prefix, options) = registered_options(url);
+    let (part_size, max_concurrent_parts) = upload_settings(&options)?;
     if scheme == ObjectStoreScheme::Memory {
         return Ok(ObjectLocation {
             store: Arc::clone(&MEMORY),
             path,
+            part_size,
+            max_concurrent_parts,
         });
     }
 
-    let (prefix, options) = registered_options(url);
     let runtime = Handle::try_current()
         .map(|handle| handle.id().to_string())
         .unwrap_or_default();
@@ -147,12 +190,60 @@ pub(crate) fn resolve(url: &str) -> io::Result<ObjectLocation> {
     let store = match stores.get(&key) {
         Some(store) => Arc::clone(store),
         None => {
-            let store = build(scheme, &parsed, &options)?;
+            let backend_options: Vec<(String, String)> = options
+                .into_iter()
+                .filter(|(key, _)| key != PART_SIZE_KEY && key != MAX_CONCURRENT_PARTS_KEY)
+                .collect();
+            let store = build(scheme, &parsed, &backend_options)?;
             stores.insert(key, Arc::clone(&store));
             store
         }
     };
-    Ok(ObjectLocation { store, path })
+    Ok(ObjectLocation {
+        store,
+        path,
+        part_size,
+        max_concurrent_parts,
+    })
+}
+
+/// The `(part_size, max_concurrent_parts)` upload settings in `options`,
+/// with the defaults for any not given.
+///
+/// ## Errors
+/// Returns `ErrorKind::InvalidInput` for a value that is not a whole number,
+/// a part size below [`DEFAULT_PART_SIZE`], or zero concurrent parts.
+fn upload_settings(options: &[(String, String)]) -> io::Result<(usize, usize)> {
+    let mut part_size = DEFAULT_PART_SIZE;
+    let mut max_concurrent_parts = DEFAULT_MAX_CONCURRENT_PARTS;
+    for (key, value) in options {
+        let target = match key.as_str() {
+            PART_SIZE_KEY => &mut part_size,
+            MAX_CONCURRENT_PARTS_KEY => &mut max_concurrent_parts,
+            _ => continue,
+        };
+        *target = value.parse().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("object storage option '{key}' must be a whole number, got '{value}'"),
+            )
+        })?;
+    }
+    if part_size < DEFAULT_PART_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "object storage option '{PART_SIZE_KEY}' must be at least {DEFAULT_PART_SIZE} bytes"
+            ),
+        ));
+    }
+    if max_concurrent_parts == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("object storage option '{MAX_CONCURRENT_PARTS_KEY}' must be at least 1"),
+        ));
+    }
+    Ok((part_size, max_concurrent_parts))
 }
 
 /// Options of the longest registered prefix that `url` falls under, with
@@ -174,6 +265,10 @@ fn registered_options(url: &str) -> (String, Vec<(String, String)>) {
 
 /// Build the store for `scheme`, applying `options` over the backend's
 /// environment configuration.
+///
+/// The HTTP client starts with no limit on total request time. The
+/// backend's environment variables and then `options` are applied over that
+/// default, and either can set a `timeout`.
 #[cfg_attr(
     not(any(feature = "aws", feature = "gcp", feature = "azure")),
     allow(unused_variables)
@@ -187,7 +282,15 @@ fn build(
         #[cfg(feature = "aws")]
         ObjectStoreScheme::AmazonS3 => {
             use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey};
-            let mut builder = AmazonS3Builder::from_env().with_url(url.as_str());
+            let mut builder = AmazonS3Builder::from_env()
+                .with_url(url.as_str())
+                .with_client_options(client_options::<AmazonS3ConfigKey>(
+                    "AWS_",
+                    |key| match key {
+                        AmazonS3ConfigKey::Client(key) => Some(key),
+                        _ => None,
+                    },
+                ));
             for (key, value) in options {
                 let key: AmazonS3ConfigKey = key.parse().map_err(io_error)?;
                 builder = builder.with_config(key, value);
@@ -198,7 +301,15 @@ fn build(
         #[cfg(feature = "gcp")]
         ObjectStoreScheme::GoogleCloudStorage => {
             use object_store::gcp::{GoogleCloudStorageBuilder, GoogleConfigKey};
-            let mut builder = GoogleCloudStorageBuilder::from_env().with_url(url.as_str());
+            let mut builder = GoogleCloudStorageBuilder::from_env()
+                .with_url(url.as_str())
+                .with_client_options(client_options::<GoogleConfigKey>(
+                    "GOOGLE_",
+                    |key| match key {
+                        GoogleConfigKey::Client(key) => Some(key),
+                        _ => None,
+                    },
+                ));
             for (key, value) in options {
                 let key: GoogleConfigKey = key.parse().map_err(io_error)?;
                 builder = builder.with_config(key, value);
@@ -209,7 +320,15 @@ fn build(
         #[cfg(feature = "azure")]
         ObjectStoreScheme::MicrosoftAzure => {
             use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
-            let mut builder = MicrosoftAzureBuilder::from_env().with_url(url.as_str());
+            let mut builder = MicrosoftAzureBuilder::from_env()
+                .with_url(url.as_str())
+                .with_client_options(client_options::<AzureConfigKey>(
+                    "AZURE_",
+                    |key| match key {
+                        AzureConfigKey::Client(key) => Some(key),
+                        _ => None,
+                    },
+                ));
             for (key, value) in options {
                 let key: AzureConfigKey = key.parse().map_err(io_error)?;
                 builder = builder.with_config(key, value);
@@ -226,9 +345,76 @@ fn build(
     }
 }
 
+/// HTTP client options with no limit on total request time, followed by any
+/// client settings in the environment variables beginning with `prefix`.
+///
+/// The backend builders' `from_env` reads the same variables. Setting the
+/// client options afterwards replaces those, so the client settings among
+/// them are applied again here.
+#[cfg(any(feature = "aws", feature = "gcp", feature = "azure"))]
+fn client_options<K: FromStr>(
+    prefix: &str,
+    client_key: impl Fn(K) -> Option<ClientConfigKey>,
+) -> ClientOptions {
+    let mut options = ClientOptions::new().with_timeout_disabled();
+    for (key, value) in env::vars() {
+        if !key.starts_with(prefix) {
+            continue;
+        }
+        if let Some(key) = key.to_ascii_lowercase().parse().ok().and_then(&client_key) {
+            options = options.with_config(key, value);
+        }
+    }
+    options
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_settings_default_and_validate() {
+        assert_eq!(
+            upload_settings(&[]).unwrap(),
+            (DEFAULT_PART_SIZE, DEFAULT_MAX_CONCURRENT_PARTS)
+        );
+        let custom = [
+            (PART_SIZE_KEY.to_string(), (8 * 1024 * 1024).to_string()),
+            (MAX_CONCURRENT_PARTS_KEY.to_string(), "2".to_string()),
+        ];
+        assert_eq!(upload_settings(&custom).unwrap(), (8 * 1024 * 1024, 2));
+
+        for (key, value) in [
+            (PART_SIZE_KEY, "1024"),
+            (PART_SIZE_KEY, "large"),
+            (MAX_CONCURRENT_PARTS_KEY, "0"),
+        ] {
+            let err = upload_settings(&[(key.to_string(), value.to_string())]).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{key}={value}");
+        }
+    }
+
+    #[test]
+    fn registering_an_invalid_upload_setting_is_rejected() {
+        let err = register_options(
+            "memory:///invalid-settings",
+            &[("max_concurrent_parts", "0")],
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn registered_upload_settings_reach_the_location() {
+        register_options(
+            "memory:///upload-settings",
+            &[("max_concurrent_parts", "2"), ("part_size", "6291456")],
+        )
+        .unwrap();
+        let location = resolve("memory:///upload-settings/a.bin").unwrap();
+        assert_eq!(location.max_concurrent_parts, 2);
+        assert_eq!(location.part_size, 6 * 1024 * 1024);
+    }
 
     #[test]
     fn object_url_detects_object_schemes_only() {

@@ -15,6 +15,7 @@
 mod object_storage_checks;
 
 use lightstream::models::readers::object_storage::StorageReader;
+use lightstream::object_storage::register_options;
 use object_storage_checks as checks;
 
 const BASE: &str = "memory:///checks";
@@ -55,6 +56,19 @@ async fn ipc_stream_round_trips_through_the_async_adapters() {
 #[test]
 fn large_objects_upload_in_parts_and_read_back_whole() {
     run(checks::large_objects_upload_in_parts_and_read_back_whole);
+}
+
+#[test]
+fn registered_upload_settings_apply_to_large_uploads() {
+    let base = "memory:///checks-one-part-at-a-time";
+    register_options(
+        base,
+        &[("max_concurrent_parts", "1"), ("part_size", "6291456")],
+    )
+    .unwrap();
+    let runtime = checks::runtime();
+    let _entered = runtime.enter();
+    checks::large_objects_upload_in_parts_and_read_back_whole(base);
 }
 
 #[test]
