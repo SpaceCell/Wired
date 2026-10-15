@@ -12,8 +12,7 @@
 //! over every transport, and each leaf variant wraps one lightstream end
 //! writer.
 
-use std::fs::File;
-use std::io;
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -27,6 +26,7 @@ use lightstream::models::writers::csv::CsvWriter;
 use lightstream::models::writers::ipc::sync_table::SyncTableWriter;
 use lightstream::models::writers::json::JsonWriter;
 use lightstream::models::writers::lightstream::LightstreamWriter;
+use lightstream::models::writers::object_storage::StorageWriter;
 use lightstream::models::writers::parallel::tcp::TcpParallelTableWriter;
 use lightstream::models::writers::parquet::write_parquet_table;
 use lightstream::models::writers::http::HttpTableWriter;
@@ -86,7 +86,7 @@ pub enum FileIO {
     Ipc {
         path: PathBuf,
         compression: Option<Compression>,
-        writer: Option<SyncTableWriter<File>>,
+        writer: Option<SyncTableWriter<StorageWriter>>,
     },
     Parquet {
         path: PathBuf,
@@ -661,6 +661,9 @@ impl FileIO {
     /// from the first batch's schema, and the document formats buffer it
     /// for `finish`.
     fn write(&mut self, table: &Table) -> Result<(), IoError> {
+        // Object URL uploads wait on the embedded runtime from this thread.
+        #[cfg(feature = "object_storage")]
+        let _guard = runtime().enter();
         match self {
             FileIO::Ipc {
                 path,
@@ -670,7 +673,7 @@ impl FileIO {
                 if writer.is_none() {
                     let fields: Vec<Field> =
                         table.cols.iter().map(|col| (*col.field).clone()).collect();
-                    let file = File::create(&path).map_err(IoError::Io)?;
+                    let file = StorageWriter::create(&path).map_err(IoError::Io)?;
                     *writer = Some(SyncTableWriter::new(
                         file,
                         fields,
@@ -709,6 +712,9 @@ impl FileIO {
     /// document formats write their buffered batches as one file. A target
     /// that received no batches writes nothing.
     fn finish(&mut self) -> Result<(), IoError> {
+        // Object URL uploads wait on the embedded runtime from this thread.
+        #[cfg(feature = "object_storage")]
+        let _guard = runtime().enter();
         match self {
             FileIO::Ipc { writer, .. } => match writer.as_mut() {
                 Some(writer) => Ok(writer.finish()?),
@@ -724,8 +730,10 @@ impl FileIO {
                 }
                 let tables: Vec<Table> = batches.drain(..).map(|t| (*t).clone()).collect();
                 let table = tables.consolidate();
-                let file = File::create(&path).map_err(IoError::Io)?;
-                write_parquet_table(&table, file, *compression)
+                let mut file = StorageWriter::create(&path).map_err(IoError::Io)?;
+                write_parquet_table(&table, &mut file, *compression)?;
+                // Flushing completes the object when `path` is an object URL.
+                Ok(file.flush()?)
             }
             FileIO::CsvStdio { .. } | FileIO::JsonStdio { .. } => Ok(()),
             FileIO::Csv {
@@ -738,7 +746,7 @@ impl FileIO {
                 }
                 let name = Some(batches[0].name.clone());
                 let super_table = SuperTable::from_batches(batches.drain(..).collect(), name);
-                let file = File::create(&path).map_err(IoError::Io)?;
+                let file = StorageWriter::create(&path).map_err(IoError::Io)?;
                 let mut writer = CsvWriter::with_options(file, options.clone());
                 writer.write_supertable(&super_table)?;
                 Ok(writer.flush()?)
@@ -753,7 +761,7 @@ impl FileIO {
                 }
                 let name = Some(batches[0].name.clone());
                 let super_table = SuperTable::from_batches(batches.drain(..).collect(), name);
-                let file = File::create(&path).map_err(IoError::Io)?;
+                let file = StorageWriter::create(&path).map_err(IoError::Io)?;
                 let mut writer = JsonWriter::new(file, options.clone());
                 writer.write_supertable(&super_table)?;
                 Ok(writer.flush()?)
@@ -912,7 +920,8 @@ impl PyDataStreamWriter {
     }
 
     /// File targets write through on each batch, so flush delegates to the
-    /// operating system.
+    /// operating system. Objects at object URLs are completed, and become
+    /// visible in their store, on `close`.
     fn flush(&self) -> PyResult<()> {
         Ok(())
     }

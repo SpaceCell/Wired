@@ -11,7 +11,6 @@
 //! `Protocol` picks the wire framing, with both arms running over every
 //! transport, and each leaf variant wraps one lightstream end reader.
 
-use std::fs::File;
 use std::future::poll_fn;
 use std::io::{BufReader, Stdin};
 use std::path::PathBuf;
@@ -224,6 +223,9 @@ impl FileIO {
     /// Reads the next batch from the file, advancing the batch cursor for
     /// the indexed IPC readers and the chunk iterator for directories.
     fn read(&mut self) -> Result<Option<Table>, IoError> {
+        // Object URL reads wait on the embedded runtime from this thread.
+        #[cfg(feature = "object_storage")]
+        let _guard = runtime().enter();
         match self {
             FileIO::Ipc { reader, cursor } => {
                 if *cursor >= reader.num_batches() {
@@ -248,8 +250,8 @@ impl FileIO {
                     return Ok(None);
                 }
                 *done = true;
-                let file = File::open(&path).map_err(IoError::Io)?;
-                Ok(Some(load_parquet_table(file)?))
+                let reader = StorageReader::open(&path).map_err(IoError::Io)?;
+                Ok(Some(load_parquet_table(reader)?))
             }
             FileIO::ParquetChunked { reader } => reader.next().transpose(),
             FileIO::Csv { reader } => Ok(reader.next_batch()?),

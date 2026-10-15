@@ -19,6 +19,13 @@ mod runtime;
 mod tls;
 mod uri;
 
+#[cfg(feature = "object_storage")]
+use std::collections::HashMap;
+
+#[cfg(feature = "object_storage")]
+use lightstream::error::IoError;
+#[cfg(feature = "object_storage")]
+use lightstream::object_storage::register_options;
 use pyo3::prelude::*;
 
 pub use errors::{FormatError, LightstreamError, ProtocolError, TransportError, to_py_err};
@@ -36,7 +43,10 @@ pub use runtime::{block_on_py, runtime};
 /// on TCP sources, where the reader always accepts that many
 /// connections. The quic, wt, wss, and https schemes carry TLS,
 /// taking `tls_cert` and `tls_key` PEM paths on the accepting peer
-/// and a `tls_ca` PEM path on the connecting peer.
+/// and a `tls_ca` PEM path on the connecting peer. In builds with the
+/// `object_storage` feature, an object URL such as `s3://bucket/key.parquet`
+/// or `memory:///key.parquet` reads in place of a file path, and an object
+/// prefix with chunk objects beneath it reads as a chunk directory.
 #[pyfunction]
 #[pyo3(signature = (uri, *, format=None, protocol=None, parallel=0, accept=false, tls_cert=None, tls_key=None, tls_ca=None, mmap=None, out_of_core=false, base=None, delimiter=None, header=None, batch_size=None))]
 fn read(
@@ -84,7 +94,9 @@ fn read(
 /// targets, holding the endpoint bound for the life of the process and
 /// blocking until a reader connects. The quic, wt, wss, and https
 /// schemes carry TLS, taking `tls_cert` and `tls_key` PEM paths on
-/// the accepting peer and a `tls_ca` PEM path on the connecting peer.
+/// the accepting peer and a `tls_ca` PEM path on the connecting peer. In
+/// builds with the `object_storage` feature, an object URL writes in place
+/// of a file path, and the object becomes visible in its store on `close`.
 #[pyfunction]
 #[pyo3(signature = (uri, *, format=None, protocol=None, parallel=0, accept=false, tls_cert=None, tls_key=None, tls_ca=None, compression=None, delimiter=None, header=None))]
 fn write(
@@ -110,6 +122,27 @@ fn write(
     Ok(PyDataStreamWriter::new(resolved))
 }
 
+/// Sets the options for every object URL beneath `prefix`, such as
+/// `s3://telemetry` or `s3://telemetry/trades`. The options replace any set
+/// earlier for the same prefix, and the longest registered prefix of a URL
+/// supplies its options. Keys are the backend configuration keys, for
+/// example `aws_region`, `aws_endpoint` or `google_service_account`, the
+/// HTTP client keys such as `timeout`, and the upload settings `part_size`
+/// and `max_concurrent_parts`. Values are strings. Settings not given here
+/// are read by the backend from its standard environment variables.
+/// Raises `LightstreamError` when `prefix` is not an object URL or an upload
+/// setting is invalid. Unknown backend keys raise when a URL beneath the
+/// prefix is first opened.
+#[cfg(feature = "object_storage")]
+#[pyfunction(name = "register_options")]
+fn register_object_options(prefix: &str, options: HashMap<String, String>) -> PyResult<()> {
+    let options: Vec<(&str, &str)> = options
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    register_options(prefix, &options).map_err(|e| to_py_err(IoError::Io(e)))
+}
+
 /// Streaming Arrow I/O for Python.
 #[pymodule]
 #[pyo3(name = "lightstream")]
@@ -122,6 +155,8 @@ fn lightstream_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(read, m)?)?;
     m.add_function(wrap_pyfunction!(write, m)?)?;
+    #[cfg(feature = "object_storage")]
+    m.add_function(wrap_pyfunction!(register_object_options, m)?)?;
     m.add_class::<PyDataStreamReader>()?;
     m.add_class::<PyDataStreamWriter>()?;
     m.add_class::<PyMessage>()?;

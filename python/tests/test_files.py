@@ -154,6 +154,16 @@ def test_unknown_transport_scheme_raises(tmp_path):
         ls.write("ftp://sink:9000")
 
 
+@pytest.mark.skipif(
+    hasattr(ls, "register_options"), reason="built with the object_storage feature"
+)
+def test_object_url_without_object_storage_raises():
+    with pytest.raises(ls.TransportError, match="object_storage feature"):
+        ls.read("memory:///quotes.arrow")
+    with pytest.raises(ls.TransportError, match="object_storage feature"):
+        ls.write("s3://bucket/quotes.arrow")
+
+
 def test_unknown_protocol_raises():
     with pytest.raises(ls.ProtocolError, match="unknown protocol"):
         ls.read("feed.arrow", protocol="flight")
