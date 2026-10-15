@@ -26,6 +26,7 @@ use std::sync::atomic::AtomicU64;
 use minarrow::Table;
 
 use crate::models::encoders::csv::CsvEncodeOptions;
+use crate::models::writers::chunked::partition::PartitionType;
 use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::csv::CsvWriter;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
@@ -42,6 +43,7 @@ pub struct ChunkedCsvWriter {
     base: String,
     options: CsvEncodeOptions,
     next_index: AtomicU64,
+    partition: Option<PartitionType>,
 }
 
 impl ChunkedCsvWriter {
@@ -56,7 +58,15 @@ impl ChunkedCsvWriter {
             base: base.to_string(),
             options,
             next_index: AtomicU64::new(0),
+            partition: None,
         })
+    }
+
+    /// Place each chunk in a partition directory beneath `dir`, for
+    /// example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.csv`.
+    pub fn with_partition(mut self, partition: PartitionType) -> Self {
+        self.partition = Some(partition);
+        self
     }
 }
 
@@ -82,6 +92,11 @@ impl ChunkedTableWriter for ChunkedCsvWriter {
     /// reserve indices off this atom.
     fn counter(&self) -> &AtomicU64 {
         &self.next_index
+    }
+
+    /// Partitioning applied to chunk paths, if configured.
+    fn partition(&self) -> Option<&PartitionType> {
+        self.partition.as_ref()
     }
 
     /// Encode `table` as a complete CSV file at `path` using the writer's

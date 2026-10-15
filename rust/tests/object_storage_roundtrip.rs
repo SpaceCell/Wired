@@ -120,6 +120,11 @@ fn chunked_arrow_round_trips_beneath_an_object_prefix() {
     run(checks::arrow_chunks::chunked_arrow_round_trips_beneath_an_object_prefix);
 }
 
+#[test]
+fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix() {
+    run(checks::arrow_chunks::auto_partitioned_chunks_round_trip_beneath_an_object_prefix);
+}
+
 #[cfg(feature = "csv")]
 #[test]
 fn csv_round_trips_through_the_path_entry_points() {
