@@ -36,7 +36,7 @@ use object_store::path::Path as ObjectPath;
 use object_store::{ClientConfigKey, ClientOptions};
 use object_store::{ObjectStore, ObjectStoreScheme};
 use tokio::runtime::Handle;
-use url::Url;
+use url::{Position, Url};
 
 use crate::object_storage::error::io_error;
 
@@ -64,8 +64,11 @@ const OBJECT_SCHEMES: &[&str] = &[
 static OPTIONS: LazyLock<RwLock<Vec<(String, Vec<(String, String)>)>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
 
-/// Stores built so far, keyed by scheme, bucket, matched option prefix and
-/// Tokio runtime.
+/// Stores built so far, keyed by the URL up to its path, matched option
+/// prefix and Tokio runtime.
+///
+/// The URL up to its path includes the user part, which holds the container
+/// in Azure URLs such as `abfss://container@account.dfs.core.windows.net`.
 static STORES: LazyLock<Mutex<HashMap<String, Arc<dyn ObjectStore>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -180,11 +183,7 @@ pub(crate) fn resolve(url: &str) -> io::Result<ObjectLocation> {
     let runtime = Handle::try_current()
         .map(|handle| handle.id().to_string())
         .unwrap_or_default();
-    let key = format!(
-        "{}://{}|{prefix}|{runtime}",
-        parsed.scheme(),
-        parsed.host_str().unwrap_or("")
-    );
+    let key = format!("{}|{prefix}|{runtime}", &parsed[..Position::BeforePath]);
 
     let mut stores = STORES.lock().expect("object storage store cache lock");
     let store = match stores.get(&key) {
@@ -470,5 +469,14 @@ mod tests {
     fn a_backend_without_its_feature_is_unsupported() {
         let err = resolve("s3://bucket/key").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(feature = "azure")]
+    #[test]
+    fn containers_in_the_url_user_part_resolve_to_separate_stores() {
+        let first = resolve("abfss://first@account.dfs.core.windows.net/key").unwrap();
+        let second = resolve("abfss://second@account.dfs.core.windows.net/key").unwrap();
+        assert!(first.store.to_string().contains("first"), "{}", first.store);
+        assert!(second.store.to_string().contains("second"), "{}", second.store);
     }
 }
