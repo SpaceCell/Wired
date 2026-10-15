@@ -242,6 +242,15 @@ fn chunked_arrow_round_trips_beneath_an_object_prefix() {
     );
 }
 
+#[test]
+#[ignore = "requires LIGHTSTREAM_S3_URL and AWS credentials"]
+fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix() {
+    run(
+        "partitioned-arrow",
+        checks::arrow_chunks::auto_partitioned_chunks_round_trip_beneath_an_object_prefix,
+    );
+}
+
 #[cfg(feature = "csv")]
 #[test]
 #[ignore = "requires LIGHTSTREAM_S3_URL and AWS credentials"]

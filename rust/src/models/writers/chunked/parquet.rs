@@ -26,6 +26,7 @@ use minarrow::Table;
 
 use crate::compression::Compression;
 use crate::error::IoError;
+use crate::models::writers::chunked::partition::PartitionType;
 use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::parquet::write_parquet_table;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
@@ -37,6 +38,7 @@ pub struct ChunkedParquetWriter {
     base: String,
     compression: Option<Compression>,
     next_index: AtomicU64,
+    partition: Option<PartitionType>,
 }
 
 impl ChunkedParquetWriter {
@@ -55,7 +57,15 @@ impl ChunkedParquetWriter {
             base: base.to_string(),
             compression,
             next_index: AtomicU64::new(0),
+            partition: None,
         })
+    }
+
+    /// Place each chunk in a partition directory beneath `dir`, for
+    /// example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.parquet`.
+    pub fn with_partition(mut self, partition: PartitionType) -> Self {
+        self.partition = Some(partition);
+        self
     }
 }
 
@@ -81,6 +91,11 @@ impl ChunkedTableWriter for ChunkedParquetWriter {
     /// reserve indices off this atom.
     fn counter(&self) -> &AtomicU64 {
         &self.next_index
+    }
+
+    /// Partitioning applied to chunk paths, if configured.
+    fn partition(&self) -> Option<&PartitionType> {
+        self.partition.as_ref()
     }
 
     /// Encode `table` as a complete Parquet file at `path` using the

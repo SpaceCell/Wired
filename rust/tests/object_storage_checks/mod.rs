@@ -273,8 +273,13 @@ pub mod arrow_chunks {
     use super::*;
     use lightstream::models::readers::chunked::arrow::ChunkedArrowReader;
     use lightstream::models::writers::chunked::arrow::ChunkedArrowWriter;
+    use lightstream::models::writers::chunked::partition::PartitionType;
     use lightstream::traits::chunked_table_reader::ChunkedTableReader;
     use lightstream::traits::chunked_table_writer::ChunkedTableWriter;
+
+    /// 2026-02-09T07:00:00Z in epoch nanoseconds.
+    const SEVEN_AM: u64 = 1_770_620_400_000_000_000;
+    const ONE_HOUR: u64 = 3_600_000_000_000;
 
     pub fn chunked_arrow_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-arrow/run");
@@ -286,6 +291,31 @@ pub mod arrow_chunks {
         let reader = ChunkedArrowReader::open(&dir, "trades", ()).unwrap();
         let tables: Vec<Table> = reader.map(|chunk| chunk.unwrap()).collect();
         assert_eq!(ids(&tables), (0..21).collect::<Vec<_>>());
+    }
+
+    pub fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix(base: &str) {
+        let dir = format!("{base}/chunked-arrow/partitioned");
+        let mut writer = ChunkedArrowWriter::new(&dir, "trades")
+            .unwrap()
+            .with_partition(PartitionType::Auto);
+        // Written out of time order: ids 10..20 at 08:00, then 0..10 at 07:00.
+        let eight = writer
+            .write_chunk_for_time(&sample_table(10, 10), SEVEN_AM + ONE_HOUR)
+            .unwrap();
+        writer.write_chunk_for_time(&sample_table(0, 10), SEVEN_AM).unwrap();
+        assert_eq!(
+            eight.to_str().unwrap(),
+            format!("{dir}/date=2026-02-09/hour=08/trades-0000000000.arrow")
+        );
+
+        let all = ChunkedArrowReader::open(&dir, "trades", ()).unwrap();
+        let tables: Vec<Table> = all.map(|chunk| chunk.unwrap()).collect();
+        assert_eq!(ids(&tables), (0..20).collect::<Vec<_>>());
+
+        let hour = format!("{dir}/date=2026-02-09/hour=07");
+        let seven = ChunkedArrowReader::open(&hour, "trades", ()).unwrap();
+        let tables: Vec<Table> = seven.map(|chunk| chunk.unwrap()).collect();
+        assert_eq!(ids(&tables), (0..10).collect::<Vec<_>>());
     }
 }
 

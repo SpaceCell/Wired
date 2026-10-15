@@ -14,6 +14,11 @@
 //! and a `load_table` that further consolidates the chunks into a
 //! single `Table`. The `*_cols` variants project to the named columns.
 //!
+//! Chunks in nested partition directories, as written by a partitioned
+//! chunked writer, are included and ordered by partition directory and then
+//! by index. Opening a reader on one partition directory, such as
+//! `<dir>/date=2026-10-14`, reads that partition alone.
+//!
 //! `load_batched` deliberately does not consolidate; the per-chunk batches
 //! are preserved in the returned `SuperTable`. Callers wanting a single
 //! `Table` use `load_table` (which itself calls
@@ -36,7 +41,8 @@ use tokio::runtime::Handle;
 /// Open / load_batched / iterate / par_load_batched shape shared by the
 /// per-format chunked readers.
 ///
-/// Implementors yield one `Table` per chunk file in ascending index order.
+/// Implementors yield one `Table` per chunk file, ordered by partition
+/// directory and then by ascending index.
 /// Per-format extras (CSV decode options, batch size, etc.) flow through
 /// the associated `Options` type; formats with no extras use `()`.
 pub trait ChunkedTableReader: Iterator<Item = Result<Table, Self::Error>> + Sized {
@@ -45,18 +51,19 @@ pub trait ChunkedTableReader: Iterator<Item = Result<Table, Self::Error>> + Size
     /// Per-format constructor options. Use `()` if no extras are needed.
     type Options;
 
-    /// Open every `<base>-*.<ext>` file inside `dir`, sorted by numeric
-    /// suffix so chunks come out in write order. Files whose names don't
-    /// match the pattern are ignored.
+    /// Open every `<base>-*.<ext>` file beneath `dir`, including files in
+    /// nested partition directories, sorted by partition directory and then
+    /// by numeric suffix. Chunks of an unpartitioned directory come out in
+    /// write order. Files whose names don't match the pattern are ignored.
     fn open<P: AsRef<Path>>(
         dir: P,
         base: &str,
         options: Self::Options,
     ) -> Result<Self, Self::Error>;
 
-    /// List chunk file paths in `dir` matching this format's naming
-    /// pattern, sorted by ascending numeric index. Used by `open` to
-    /// populate the reader's path list.
+    /// List chunk file paths beneath `dir` matching this format's naming
+    /// pattern, sorted by partition directory and then by ascending numeric
+    /// index. Used by `open` to populate the reader's path list.
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> Result<Vec<PathBuf>, Self::Error>;
 
     /// Return the chunk paths held by this reader, in write order.

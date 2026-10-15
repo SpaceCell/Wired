@@ -38,7 +38,9 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "object_storage")]
 use bytes::Bytes;
 #[cfg(feature = "object_storage")]
-use object_store::ObjectStoreExt;
+use futures_util::TryStreamExt;
+#[cfg(feature = "object_storage")]
+use object_store::{ObjectMeta, ObjectStoreExt};
 
 #[cfg(feature = "object_storage")]
 use crate::object_storage::{ObjectLocation, current_handle, io_error, object_url, resolve};
@@ -235,6 +237,44 @@ pub fn list_dir<P: AsRef<Path>>(dir: P) -> io::Result<Vec<PathBuf>> {
     fs::read_dir(dir)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect()
+}
+
+/// Paths of every file beneath the directory or object prefix `dir`,
+/// including files in nested directories, in no particular order.
+///
+/// Object entries are returned as object URLs beneath `dir`, as for
+/// [`list_dir`]. On object storage this is one listing of every object under
+/// the prefix.
+pub fn list_files<P: AsRef<Path>>(dir: P) -> io::Result<Vec<PathBuf>> {
+    #[cfg(feature = "object_storage")]
+    if let Some(url) = object_url(dir.as_ref()) {
+        let location = resolve(&url)?;
+        let objects: Vec<ObjectMeta> = current_handle()?
+            .block_on(location.store.list(Some(&location.path)).try_collect())
+            .map_err(io_error)?;
+        let base = url.trim_end_matches('/');
+        return Ok(objects
+            .iter()
+            .filter_map(|meta| meta.location.prefix_match(&location.path))
+            .map(|parts| {
+                let relative: Vec<String> = parts.map(|part| part.as_ref().to_string()).collect();
+                PathBuf::from(format!("{base}/{}", relative.join("/")))
+            })
+            .collect());
+    }
+    let mut files = Vec::new();
+    let mut pending = vec![dir.as_ref().to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// Read exactly `buf.len()` bytes starting at `offset` without touching

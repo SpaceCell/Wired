@@ -9,8 +9,10 @@
 //! Reads a directory of `<base>-NNNNNNNNNN.parquet` files emitted by
 //! `ChunkedParquetWriter` and presents them as an ordered iterator of
 //! `Table`s. Each chunk file is a complete, independently parseable
-//! Parquet file. The reader sorts files by their numeric index so
-//! consumers see batches in write order.
+//! Parquet file. The reader includes files in nested partition
+//! directories and sorts files by partition directory and then by numeric
+//! index. Consumers of an unpartitioned directory see batches in write
+//! order.
 //!
 //! ## Concurrency model
 //!
@@ -28,7 +30,7 @@ use minarrow::Table;
 
 use crate::error::IoError;
 use crate::models::readers::parquet::{load_parquet_table_cols, load_parquet_table};
-use crate::models::readers::object_storage::{StorageReader, list_dir};
+use crate::models::readers::object_storage::{StorageReader, list_files};
 use crate::traits::chunked_table_reader::ChunkedTableReader;
 
 use std::sync::Arc;
@@ -60,7 +62,7 @@ impl ChunkedTableReader for ChunkedParquetReader {
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> Result<Vec<PathBuf>, IoError> {
         let prefix = format!("{base}-");
         let mut indexed: Vec<(u64, PathBuf)> = Vec::new();
-        for path in list_dir(dir)? {
+        for path in list_files(dir)? {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -73,7 +75,12 @@ impl ChunkedTableReader for ChunkedParquetReader {
             };
             indexed.push((index, path));
         }
-        indexed.sort_by_key(|(i, _)| *i);
+        // Order by partition directory, then by index within it, which is
+        // write order for an unpartitioned directory and time order for
+        // `PartitionType::Auto` partitions.
+        indexed.sort_by(|(a_index, a), (b_index, b)| {
+            a.parent().cmp(&b.parent()).then(a_index.cmp(b_index))
+        });
         Ok(indexed.into_iter().map(|(_, p)| p).collect())
     }
 

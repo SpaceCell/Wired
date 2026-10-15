@@ -25,13 +25,29 @@
 //! write each batch end-to-end via the writer's `write_chunk_at`. Index
 //! reservation goes through the same counter as `write_chunk`, so the
 //! two paths compose without producing duplicate filenames.
+//!
+//! ## Partitioning
+//!
+//! A writer configured with a [`PartitionType`] places each chunk in a
+//! partition directory beneath its root, for example
+//! `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.<ext>`. The partition
+//! path comes from the chunk's time, given through
+//! [`ChunkedTableWriter::write_chunk_for_time`]. `write_chunk`, `write_all`
+//! and `par_write_all` use the current system time, and the two `_all`
+//! methods use one time for every batch in the call. Partition directories
+//! are created as they are first written to. Chunk indices come from the
+//! writer's single counter whatever the partition.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use minarrow::{SuperTable, Table};
 use tokio::runtime::Handle;
+
+use crate::models::writers::chunked::partition::PartitionType;
+use crate::models::writers::object_storage::create_dir_all;
 
 /// extension / dir / base / write_chunk / write_chunk_at / par_write_all
 /// shape shared by the per-format chunked writers.
@@ -64,6 +80,10 @@ pub trait ChunkedTableWriter: Sized {
     /// reserve indices off this atom so the two paths compose.
     fn counter(&self) -> &AtomicU64;
 
+    /// Partitioning applied to chunk paths, or `None` for a single flat
+    /// directory.
+    fn partition(&self) -> Option<&PartitionType>;
+
     /// Total number of chunks written so far.
     fn batches_written(&self) -> u64 {
         self.counter().load(Ordering::Relaxed)
@@ -81,6 +101,29 @@ pub trait ChunkedTableWriter: Sized {
         ))
     }
 
+    /// Build the path for chunk `index` of `table` at `time_ns` epoch
+    /// nanoseconds, creating its partition directory if needed.
+    ///
+    /// Without partitioning this is [`Self::chunk_path_for`].
+    fn chunk_path_for_time(
+        &self,
+        table: &Table,
+        time_ns: u64,
+        index: u64,
+    ) -> io::Result<PathBuf> {
+        let Some(partition) = self.partition() else {
+            return Ok(self.chunk_path_for(index));
+        };
+        let dir = self.dir().join(partition.partition(table, time_ns));
+        create_dir_all(&dir)?;
+        Ok(dir.join(format!(
+            "{}-{:010}.{}",
+            self.base(),
+            index,
+            Self::extension()
+        )))
+    }
+
     /// Encode `table` into a complete chunk file at `path`, using any
     /// per-format options stored on the writer. Shared per-format encode
     /// path used both by `write_chunk` (one chunk at a time) and by
@@ -89,9 +132,22 @@ pub trait ChunkedTableWriter: Sized {
 
     /// Reserve the next chunk index off the shared counter and write
     /// `table` to that chunk file. Returns the path of the written file.
+    ///
+    /// A partitioned writer takes the partition from the current system
+    /// time. See [`Self::write_chunk_for_time`] to supply the time.
     fn write_chunk(&mut self, table: &Table) -> Result<PathBuf, Self::Error> {
+        self.write_chunk_for_time(table, current_time_ns())
+    }
+
+    /// Write `table` as the next chunk, with `time_ns` epoch nanoseconds as
+    /// its time for partitioning. Returns the path of the written file.
+    ///
+    /// The time is typically the start of the event-time window that
+    /// produced `table`, which places replayed or late data in the same
+    /// partition as the original. Writers without partitioning ignore it.
+    fn write_chunk_for_time(&mut self, table: &Table, time_ns: u64) -> Result<PathBuf, Self::Error> {
         let idx = self.counter().fetch_add(1, Ordering::Relaxed);
-        let path = self.chunk_path_for(idx);
+        let path = self.chunk_path_for_time(table, time_ns, idx)?;
         self.write_chunk_at(&path, table)?;
         Ok(path)
     }
@@ -100,9 +156,10 @@ pub trait ChunkedTableWriter: Sized {
     /// file, in order. Returns the paths of the written files. Advances
     /// the shared counter by `supertable.batches.len()`.
     fn write_all(&mut self, supertable: &SuperTable) -> Result<Vec<PathBuf>, Self::Error> {
+        let time_ns = current_time_ns();
         let mut paths = Vec::with_capacity(supertable.batches.len());
         for batch in supertable.batches.iter() {
-            paths.push(self.write_chunk(batch.as_ref())?);
+            paths.push(self.write_chunk_for_time(batch.as_ref(), time_ns)?);
         }
         Ok(paths)
     }
@@ -151,6 +208,7 @@ pub trait ChunkedTableWriter: Sized {
         // any concurrent `write_chunk` callers or with a later resumed
         // streaming write.
         let start = self.counter().fetch_add(n_files as u64, Ordering::Relaxed);
+        let time_ns = current_time_ns();
 
         let cursor = AtomicU64::new(0);
         // Per-worker capacity hint: ceil(n_files / n_threads). Workers
@@ -178,7 +236,7 @@ pub trait ChunkedTableWriter: Sized {
                                 break;
                             }
                             let idx = start + i;
-                            let path = me.chunk_path_for(idx);
+                            let path = me.chunk_path_for_time(tables[i as usize], time_ns, idx)?;
                             me.write_chunk_at(&path, tables[i as usize])?;
                             local.push((i, path));
                         }
@@ -199,4 +257,11 @@ pub trait ChunkedTableWriter: Sized {
         all.sort_by_key(|(i, _)| *i);
         Ok(all.into_iter().map(|(_, p)| p).collect())
     }
+}
+
+/// Current system time in epoch nanoseconds.
+fn current_time_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64)
 }

@@ -32,6 +32,7 @@ use std::sync::atomic::AtomicU64;
 use minarrow::{Field, Table};
 
 use crate::enums::IPCMessageProtocol;
+use crate::models::writers::chunked::partition::PartitionType;
 use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::ipc::sync_table::SyncTableWriter;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
@@ -46,6 +47,7 @@ pub struct ChunkedArrowWriter {
     dir: PathBuf,
     base: String,
     next_index: AtomicU64,
+    partition: Option<PartitionType>,
 }
 
 impl ChunkedArrowWriter {
@@ -62,7 +64,15 @@ impl ChunkedArrowWriter {
             dir,
             base: base.to_string(),
             next_index: AtomicU64::new(0),
+            partition: None,
         })
+    }
+
+    /// Place each chunk in a partition directory beneath `dir`, for
+    /// example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.arrow`.
+    pub fn with_partition(mut self, partition: PartitionType) -> Self {
+        self.partition = Some(partition);
+        self
     }
 }
 
@@ -88,6 +98,11 @@ impl ChunkedTableWriter for ChunkedArrowWriter {
     /// reserve indices off this atom.
     fn counter(&self) -> &AtomicU64 {
         &self.next_index
+    }
+
+    /// Partitioning applied to chunk paths, if configured.
+    fn partition(&self) -> Option<&PartitionType> {
+        self.partition.as_ref()
     }
 
     /// Encode `table` as a complete Arrow IPC File at `path`. Shared
