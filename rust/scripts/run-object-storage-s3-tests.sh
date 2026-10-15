@@ -20,7 +20,7 @@ fi
 
 eval "$(aws configure export-credentials --format env)"
 export AWS_REGION="${AWS_REGION:-$(aws configure get region || true)}"
-: "${AWS_REGION:?set AWS_REGION to the bucket's region}"
+: "${AWS_REGION:?set AWS_REGION to the region of the bucket}"
 
 echo "Running object storage tests against ${LIGHTSTREAM_S3_URL} in ${AWS_REGION}"
 cargo test --features "aws parquet csv json" --test object_storage_s3 -- --ignored "$@"
