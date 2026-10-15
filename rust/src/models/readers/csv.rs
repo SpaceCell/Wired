@@ -14,8 +14,8 @@
 //! See `CsvDecodeOptions` for configuration.
 
 use crate::models::decoders::csv::{CsvDecodeOptions, decode_csv};
+use crate::models::readers::object_storage::StorageReader;
 use minarrow::{Field, SuperTable, Table};
-use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
@@ -32,16 +32,17 @@ pub struct CsvReader<R: BufRead> {
     finished: bool,
 }
 
-impl CsvReader<BufReader<File>> {
+impl CsvReader<StorageReader> {
     /// Open a CSV file at the given path with the given options.
+    ///
+    /// `path` is a local file path or, with the `object_storage` feature, an
+    /// object URL.
     pub fn from_path<P: AsRef<Path>>(
         path: P,
         options: CsvDecodeOptions,
         batch_size: usize,
     ) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        Ok(Self::from_reader(reader, options, batch_size))
+        Ok(Self::from_reader(StorageReader::open(path)?, options, batch_size))
     }
 }
 

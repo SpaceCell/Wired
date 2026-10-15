@@ -18,7 +18,7 @@
 //! across batches. The matching `ChunkedParquetReader` globs the directory
 //! and presents the chunks back as an ordered iterator of `Table`s.
 
-use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
@@ -26,6 +26,7 @@ use minarrow::Table;
 
 use crate::compression::Compression;
 use crate::error::IoError;
+use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::parquet::write_parquet_table;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
 
@@ -48,7 +49,7 @@ impl ChunkedParquetWriter {
         compression: Option<Compression>,
     ) -> Result<Self, IoError> {
         let dir = dir.as_ref().to_path_buf();
-        fs::create_dir_all(&dir)?;
+        create_dir_all(&dir)?;
         Ok(Self {
             dir,
             base: base.to_string(),
@@ -86,14 +87,18 @@ impl ChunkedTableWriter for ChunkedParquetWriter {
     /// writer's configured compression. Shared per-format encode path
     /// used by both `write_chunk` and `par_write_all`.
     fn write_chunk_at(&self, path: &Path, table: &Table) -> Result<(), IoError> {
-        let file = File::create(path)?;
-        write_parquet_table(table, file, self.compression)?;
+        let mut file = StorageWriter::create(path)?;
+        write_parquet_table(table, &mut file, self.compression)?;
+        // Flushing completes the object when `path` is an object URL.
+        file.flush()?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::models::readers::chunked::parquet::ChunkedParquetReader;
     use crate::traits::chunked_table_reader::ChunkedTableReader;

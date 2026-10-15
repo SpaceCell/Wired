@@ -15,7 +15,6 @@
 //!
 //! See [`JsonDecodeOptions`] for schema handling and type control.
 
-use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
@@ -29,6 +28,7 @@ use crate::models::decoders::json::{
     JsonDecodeOptions, append_ndjson_line, decode_json, finish_table, make_builders, make_field_map,
 };
 use crate::models::encoders::json::JsonFormat;
+use crate::models::readers::object_storage::StorageReader;
 
 /// Reads JSON data into Minarrow Tables.
 ///
@@ -58,17 +58,19 @@ pub struct JsonReader<R: BufRead> {
     line: Vec<u8>,
 }
 
-impl JsonReader<BufReader<File>> {
+impl JsonReader<StorageReader> {
     /// Open a JSON file at the given path.
+    ///
+    /// `path` is a local file path or, with the `object_storage` feature, an
+    /// object URL.
     pub fn from_path<P: AsRef<Path>>(
         path: P,
         format: JsonFormat,
         options: JsonDecodeOptions,
         batch_size: usize,
     ) -> io::Result<Self> {
-        let file = File::open(path)?;
         Ok(Self::from_reader(
-            BufReader::new(file),
+            StorageReader::open(path)?,
             format,
             options,
             batch_size,

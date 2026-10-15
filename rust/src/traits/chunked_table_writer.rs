@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use minarrow::{SuperTable, Table};
+use tokio::runtime::Handle;
 
 /// extension / dir / base / write_chunk / write_chunk_at / par_write_all
 /// shape shared by the per-format chunked writers.
@@ -157,14 +158,19 @@ pub trait ChunkedTableWriter: Sized {
         // perfectly balanced work and a one-slot overshoot worst-case.
         // Avoids the Vec doubling growth as each worker pushes results.
         let per_worker_cap = n_files.div_ceil(n_threads);
+        // Worker threads enter the caller's Tokio runtime, when there is
+        // one, which lets object storage paths make their requests on it.
+        let runtime = Handle::try_current().ok();
         let collected: Result<Vec<(u64, PathBuf)>, Self::Error> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(n_threads);
             for _ in 0..n_threads {
                 let cursor = &cursor;
                 let tables = &tables;
                 let me = &*self;
+                let runtime = &runtime;
                 handles.push(
                     s.spawn(move || -> Result<Vec<(u64, PathBuf)>, Self::Error> {
+                        let _runtime = runtime.as_ref().map(Handle::enter);
                         let mut local: Vec<(u64, PathBuf)> = Vec::with_capacity(per_worker_cap);
                         loop {
                             let i = cursor.fetch_add(1, Ordering::Relaxed);

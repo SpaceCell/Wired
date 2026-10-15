@@ -49,13 +49,13 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
 use minarrow::{SuperTable, Table};
 
 use crate::models::encoders::json::{JsonEncodeOptions, encode_supertable_json, encode_table_json};
+use crate::models::writers::object_storage::StorageWriter;
 
 /// A streaming JSON writer for [`minarrow::Table`] and [`minarrow::SuperTable`].
 ///
@@ -105,11 +105,13 @@ impl<W: Write> JsonWriter<W> {
     }
 }
 
-impl JsonWriter<File> {
-    /// Open the given file path and return a `JsonWriter<File>`.
+impl JsonWriter<StorageWriter> {
+    /// Create the given file path and return a `JsonWriter`.
+    ///
+    /// `path` is a local file path or, with the `object_storage` feature, an
+    /// object URL. An object is completed by [`JsonWriter::flush`].
     pub fn to_path<P: AsRef<Path>>(path: P, options: JsonEncodeOptions) -> io::Result<Self> {
-        let file = File::create(path)?;
-        Ok(Self::new(file, options))
+        Ok(Self::new(StorageWriter::create(path)?, options))
     }
 }
 

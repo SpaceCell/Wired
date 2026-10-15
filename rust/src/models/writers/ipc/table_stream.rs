@@ -301,7 +301,7 @@ pub async fn write_tables_to_stream<W, B>(
     protocol: IPCMessageProtocol,
 ) -> io::Result<()>
 where
-    W: AsyncWrite + Unpin + Send + Sync,
+    W: AsyncWrite + Unpin + Send,
     B: StreamBuffer + Unpin,
 {
     let mut writer = TableStreamWriter::<B>::new(schema, protocol, None);
@@ -337,7 +337,7 @@ pub async fn write_table_to_stream<W, B>(
     protocol: IPCMessageProtocol,
 ) -> io::Result<()>
 where
-    W: AsyncWrite + Unpin + Send + Sync,
+    W: AsyncWrite + Unpin + Send,
     B: StreamBuffer + Unpin,
 {
     let mut writer = TableStreamWriter::<B>::new(schema, protocol, None);

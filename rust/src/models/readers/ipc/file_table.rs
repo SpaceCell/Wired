@@ -22,112 +22,9 @@ use minarrow::structs::shared_buffer::SharedBuffer;
 ///   for e.g., the MMAP version can read millions of rows in microseconds, and very large volumes in milliseconds.
 /// - **Flexibility**: this standard reader is more flexible as it is not tied to memory-mapped shared memory.
 use std::collections::HashSet;
-use std::fs::File;
 use std::io;
-#[cfg(feature = "arena")]
-use std::mem::MaybeUninit;
-#[cfg(unix)]
-use std::os::unix::fs::FileExt;
-#[cfg(windows)]
-use std::os::windows::fs::FileExt;
 use std::path::Path;
 use std::sync::Arc;
-
-/// Read exactly `buf.len()` bytes starting at `offset` without touching
-/// the file's seek position. Backed by `pread(2)` on Unix and a
-/// `seek_read` loop on Windows so callers can issue many positional
-/// reads against the same shared `&File` without serialising through
-/// `&mut self` or reopening the file. The wrapper exists only because
-/// `seek_read` on Windows can return short, so callers can't share a
-/// single-call shape with Unix's `read_exact_at`.
-#[cfg(unix)]
-fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
-    file.read_exact_at(buf, offset)
-}
-
-/// Read directly into spare capacity without first claiming that its bytes
-/// are initialised. Unix `pread` accepts a raw output pointer, preserving the
-/// arena fast path without a full-buffer zeroing pass.
-#[cfg(all(unix, feature = "arena"))]
-fn read_at_uninit(file: &File, buf: &mut [MaybeUninit<u8>], offset: u64) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-
-    let mut filled = 0usize;
-    while filled < buf.len() {
-        let file_offset: libc::off_t = (offset + filled as u64).try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "file offset exceeds off_t")
-        })?;
-        let n = unsafe {
-            libc::pread(
-                file.as_raw_fd(),
-                buf.as_mut_ptr().add(filled).cast(),
-                buf.len() - filled,
-                file_offset,
-            )
-        };
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "file ended before requested offset/length",
-            ));
-        }
-        if n < 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(error);
-        }
-        filled += n as usize;
-    }
-    Ok(())
-}
-
-#[cfg(all(windows, feature = "arena"))]
-fn read_at_uninit(file: &File, buf: &mut [MaybeUninit<u8>], offset: u64) -> io::Result<()> {
-    // Windows FileExt has no spare-capacity API. Initialise once before
-    // passing the region through its safe `&mut [u8]` interface.
-    for byte in &mut *buf {
-        byte.write(0);
-    }
-    let initialised =
-        unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), buf.len()) };
-    read_at(file, initialised, offset)
-}
-
-#[cfg(windows)]
-fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
-    let mut total = 0;
-    while total < buf.len() {
-        let n = file.seek_read(&mut buf[total..], offset + total as u64)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "file ended before requested offset/length",
-            ));
-        }
-        total += n;
-    }
-    Ok(())
-}
-
-/// Positional file reads are available on Unix and Windows. Other targets,
-/// such as WebAssembly in the browser, report `ErrorKind::Unsupported`.
-#[cfg(not(any(unix, windows)))]
-fn read_at(_file: &File, _buf: &mut [u8], _offset: u64) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "positional file reads are not supported on this target",
-    ))
-}
-
-#[cfg(all(not(any(unix, windows)), feature = "arena"))]
-fn read_at_uninit(_file: &File, _buf: &mut [MaybeUninit<u8>], _offset: u64) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "positional file reads are not supported on this target",
-    ))
-}
 
 use flatbuffers::Vector;
 use minarrow::{Field, SuperTable, Table};
@@ -142,6 +39,7 @@ use crate::models::decoders::ipc::parser::{
 };
 use crate::models::decoders::limits::DecodeLimits;
 use crate::models::readers::ipc::window::window_table;
+use crate::models::readers::object_storage::StorageSource;
 
 /// Footer-declared block entry (i.e., offsets/lengths) for a dictionary or record batch.
 #[derive(Debug, Clone)]
@@ -163,11 +61,12 @@ struct IPCFileBlock {
 ///   shared memory.
 #[derive(Clone)]
 pub struct FileTableReader {
-    /// Open file handle shared across the reader's lifetime. All block
-    /// reads go through positional reads (`pread`/`seek_read`) on this
-    /// handle, so opening the file once amortises across the footer
-    /// parse, every dictionary block, and every record batch read.
-    file: Arc<File>,
+    /// Storage handle shared across the reader's lifetime. All block
+    /// reads go through positional reads on this handle: `pread`/`seek_read`
+    /// for a local file and one ranged request per read for an object.
+    /// Opening once amortises across the footer parse, every dictionary
+    /// block, and every record batch read.
+    source: Arc<StorageSource>,
     /// Arrow schema fields from the file footer
     schema: Vec<Arc<Field>>,
     /// Footer-declared dictionary block table
@@ -190,9 +89,13 @@ pub struct FileTableReader {
 
 impl FileTableReader {
     /// Open an Arrow IPC file into heap memory and parse footer/schema/block tables.
+    ///
+    /// `path` is a local file path or, with the `object_storage` feature, an
+    /// object URL. An object is read with ranged requests for the footer and
+    /// for each block as it is read.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = File::open(path.as_ref())?;
-        let file_len = file.metadata()?.len() as usize;
+        let source = StorageSource::open(path)?;
+        let file_len = source.len()? as usize;
 
         if file_len < 12 {
             return Err(io::Error::new(
@@ -203,7 +106,7 @@ impl FileTableReader {
 
         // Read only the trailing 10 bytes: footer_len (4) + closing magic (6).
         let mut tail = [0u8; 10];
-        read_at(&file, &mut tail, (file_len - 10) as u64)?;
+        source.read_at(&mut tail, (file_len - 10) as u64)?;
 
         if &tail[4..] != ARROW_MAGIC_NUMBER {
             return Err(io::Error::new(
@@ -230,7 +133,7 @@ impl FileTableReader {
 
         // Read just the footer
         let mut footer_buf = vec![0u8; footer_len];
-        read_at(&file, &mut footer_buf, footer_start as u64)?;
+        source.read_at(&mut footer_buf, footer_start as u64)?;
 
         let footer_msg = flatbuffers::root::<fbf::Footer>(&footer_buf)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad footer: {e}")))?;
@@ -301,7 +204,7 @@ impl FileTableReader {
             .unwrap_or(0);
 
         let mut rdr = Self {
-            file: Arc::new(file),
+            source: Arc::new(source),
             schema: fields,
             dict_blocks,
             record_blocks,
@@ -474,8 +377,9 @@ impl FileTableReader {
     /// shared `StreamArena` and a window over the just-written region
     /// is returned. Without the feature a fresh 64-byte aligned `Vec64`
     /// is allocated per call. Both paths use positional I/O on the
-    /// reader's shared `Arc<File>` so concurrent block reads do not
-    /// need `&mut self` and the file is opened only once per reader.
+    /// reader's shared `Arc<StorageSource>` so concurrent block reads do
+    /// not need `&mut self` and the file or object is opened only once per
+    /// reader.
     #[cfg(feature = "arena")]
     fn read_block(&self, blk: &IPCFileBlock) -> io::Result<SharedBuffer> {
         let total = blk.meta_bytes + blk.body_bytes;
@@ -487,7 +391,7 @@ impl FileTableReader {
         arena.ensure_capacity(total);
         let start = arena.write_pos();
         let spare = arena.spare_uninit();
-        read_at_uninit(&self.file, &mut spare[..total], blk.offset as u64)?;
+        self.source.read_at_uninit(&mut spare[..total], blk.offset as u64)?;
         // SAFETY: read_at_uninit filled the entire requested region.
         unsafe { arena.advance(total) };
         let shared = arena.window(start, total);
@@ -507,7 +411,7 @@ impl FileTableReader {
         unsafe {
             buf.set_len(total);
         }
-        read_at(&self.file, &mut buf, blk.offset as u64)?;
+        self.source.read_at(&mut buf, blk.offset as u64)?;
         Ok(SharedBuffer::from_vec64(buf))
     }
 

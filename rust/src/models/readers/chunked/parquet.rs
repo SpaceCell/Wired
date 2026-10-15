@@ -22,14 +22,13 @@
 //! across worker threads and returns a `SuperTable` with batches in
 //! write order.
 
-use std::fs::{self, File};
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use minarrow::Table;
 
 use crate::error::IoError;
 use crate::models::readers::parquet::{load_parquet_table_cols, load_parquet_table};
+use crate::models::readers::object_storage::{StorageReader, list_dir};
 use crate::traits::chunked_table_reader::ChunkedTableReader;
 
 use std::sync::Arc;
@@ -61,9 +60,7 @@ impl ChunkedTableReader for ChunkedParquetReader {
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> Result<Vec<PathBuf>, IoError> {
         let prefix = format!("{base}-");
         let mut indexed: Vec<(u64, PathBuf)> = Vec::new();
-        for entry in fs::read_dir(dir.as_ref())? {
-            let entry = entry?;
-            let path = entry.path();
+        for path in list_dir(dir)? {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -81,13 +78,11 @@ impl ChunkedTableReader for ChunkedParquetReader {
     }
 
     fn read_chunk(&self, path: &Path) -> Result<Table, IoError> {
-        let file = File::open(path).map_err(IoError::from)?;
-        load_parquet_table(BufReader::new(file))
+        load_parquet_table(StorageReader::open(path)?)
     }
 
     fn read_chunk_cols(&self, path: &Path, columns: &[&str]) -> Result<Table, IoError> {
-        let file = File::open(path).map_err(IoError::from)?;
-        load_parquet_table_cols(BufReader::new(file), columns)
+        load_parquet_table_cols(StorageReader::open(path)?, columns)
     }
 
     fn load_batched_cols(self, columns: &[&str]) -> Result<SuperTable, IoError> {
@@ -119,6 +114,8 @@ impl Iterator for ChunkedParquetReader {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::models::writers::chunked::parquet::ChunkedParquetWriter;
     use crate::traits::chunked_table_writer::ChunkedTableWriter;

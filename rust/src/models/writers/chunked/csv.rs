@@ -19,7 +19,6 @@
 //! `ChunkedCsvReader` globs the directory and presents the chunks back
 //! as an ordered iterator of `Table`s.
 
-use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -27,6 +26,7 @@ use std::sync::atomic::AtomicU64;
 use minarrow::Table;
 
 use crate::models::encoders::csv::CsvEncodeOptions;
+use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::csv::CsvWriter;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
 
@@ -50,7 +50,7 @@ impl ChunkedCsvWriter {
     /// index. The directory is created if it does not exist.
     pub fn new<P: AsRef<Path>>(dir: P, base: &str, options: CsvEncodeOptions) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
-        fs::create_dir_all(&dir)?;
+        create_dir_all(&dir)?;
         Ok(Self {
             dir,
             base: base.to_string(),
@@ -88,7 +88,7 @@ impl ChunkedTableWriter for ChunkedCsvWriter {
     /// configured encode options. Shared per-format encode path used by
     /// both `write_chunk` and `par_write_all`.
     fn write_chunk_at(&self, path: &Path, table: &Table) -> io::Result<()> {
-        let file = File::create(path)?;
+        let file = StorageWriter::create(path)?;
         let mut writer = CsvWriter::with_options(file, self.options.clone());
         writer.write_table(table)?;
         writer.flush()?;
@@ -98,6 +98,8 @@ impl ChunkedTableWriter for ChunkedCsvWriter {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::models::readers::chunked::csv::{ChunkedCsvReadOptions, ChunkedCsvReader};
     use crate::traits::chunked_table_reader::ChunkedTableReader;
