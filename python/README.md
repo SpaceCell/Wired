@@ -44,6 +44,28 @@ Arrow IPC readers use memory mapping and out-of-core routing where appropriate.
 
 Readers yield `minarrow.Table` batches. `read_all()` returns a `Table` when the result is contiguous or a `ChunkedTable` when multiple chunks must be preserved.
 
+### Object storage
+
+Builds with the `object_storage` feature accept object URLs wherever a file path is accepted. An object prefix with chunk objects beneath it reads in the same way as a chunk directory.
+
+```python
+ls.register_options("s3://telemetry", {"aws_region": "eu-west-2"})
+
+table = ls.read("s3://telemetry/trades/2026-10-14.parquet").read_all()
+
+with ls.write("s3://telemetry/trades/summary.arrow") as writer:
+    writer.write(table)
+```
+
+| Store                    | URL                               | Feature          |
+| ------------------------ | --------------------------------- | ---------------- |
+| In-process memory        | `memory:///path`                  | `object_storage` |
+| Amazon S3 and compatible | `s3://bucket/path`                | `aws`            |
+| Google Cloud Storage     | `gs://bucket/path`                | `gcp`            |
+| Azure Blob Storage       | `az://container/path`, `abfss://` | `azure`          |
+
+Credentials come from each backend's standard environment variables. `register_options` sets backend options and the upload settings `part_size` and `max_concurrent_parts` for every URL beneath a prefix. Written objects become visible in their store when the writer closes. Memory-mapped reads apply to local files only.
+
 ### Network transports
 
 The same interface streams raw Arrow IPC over TCP, Unix domain sockets, WebSocket, HTTP, QUIC, WebTransport and standard I/O.
@@ -224,6 +246,8 @@ pip install maturin
 maturin develop
 pytest tests/
 ```
+
+Optional features are enabled at build time, for example `maturin develop --features object_storage` or `maturin develop --features aws,gcp,azure`.
 
 ## Licence
 
