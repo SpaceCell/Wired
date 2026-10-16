@@ -32,6 +32,7 @@ use std::sync::atomic::AtomicU64;
 use minarrow::{Field, Table};
 
 use crate::enums::IPCMessageProtocol;
+use crate::models::writers::chunked::partition::PartitionType;
 use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::ipc::sync_table::SyncTableWriter;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
@@ -46,6 +47,7 @@ pub struct ChunkedArrowWriter {
     dir: PathBuf,
     base: String,
     next_index: AtomicU64,
+    partition: Option<PartitionType>,
 }
 
 impl ChunkedArrowWriter {
@@ -55,13 +57,22 @@ impl ChunkedArrowWriter {
     /// has no per-chunk options at this layer (each file is a complete
     /// Arrow IPC File so external readers like pyarrow and arrow-rs can
     /// open it).
-    pub fn new<P: AsRef<Path>>(dir: P, base: &str) -> io::Result<Self> {
+    ///
+    /// `partition` places each chunk in a partition directory beneath `dir`,
+    /// for example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.arrow`.
+    /// `None` writes every chunk into `dir`.
+    pub fn new<P: AsRef<Path>>(
+        dir: P,
+        base: &str,
+        partition: Option<PartitionType>,
+    ) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         create_dir_all(&dir)?;
         Ok(Self {
             dir,
             base: base.to_string(),
             next_index: AtomicU64::new(0),
+            partition,
         })
     }
 }
@@ -88,6 +99,11 @@ impl ChunkedTableWriter for ChunkedArrowWriter {
     /// reserve indices off this atom.
     fn counter(&self) -> &AtomicU64 {
         &self.next_index
+    }
+
+    /// Partitioning applied to chunk paths, if configured.
+    fn partition(&self) -> Option<&PartitionType> {
+        self.partition.as_ref()
     }
 
     /// Encode `table` as a complete Arrow IPC File at `path`. Shared
@@ -117,7 +133,7 @@ mod tests {
     fn writes_indexed_chunk_files_and_round_trips() {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_test_writer");
         let _ = fs::remove_dir_all(&dir);
-        let mut w = ChunkedArrowWriter::new(&dir, "part").unwrap();
+        let mut w = ChunkedArrowWriter::new(&dir, "part", None).unwrap();
         let p0 = w
             .write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 1, 2, 3)])))
             .unwrap();
@@ -152,7 +168,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_par_writer");
         let _ = fs::remove_dir_all(&dir);
 
-        let w = ChunkedArrowWriter::new(&dir, "part").unwrap();
+        let w = ChunkedArrowWriter::new(&dir, "part", None).unwrap();
         let tables: Vec<Table> = (0..8i32)
             .map(|i| Table::new("b", Some(vec![fa_i32!("n", i, i + 100)])))
             .collect();

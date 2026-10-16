@@ -29,7 +29,7 @@ use lightstream::models::streams::object_store::{ObjectByteStream, ObjectWrite};
 use lightstream::models::writers::ipc::sync_table::write_tables_to_file_sync;
 use lightstream::models::writers::ipc::table::{TableWriter, write_tables_to_file};
 use lightstream::models::writers::object_storage::StorageWriter;
-use minarrow::{Array, Field, FieldArray, IntegerArray, NumericArray, StringArray, Table};
+use minarrow::{Array, Field, NumericArray, Table, Vec64, fa_i64, fa_str32};
 use tokio::runtime::Runtime;
 use tokio::task::spawn_blocking;
 
@@ -41,21 +41,14 @@ pub fn runtime() -> Runtime {
 
 /// Table of `n` rows whose `id` column starts at `first`.
 pub fn sample_table(first: i64, n: usize) -> Table {
-    let ids: Vec<i64> = (first..first + n as i64).collect();
-    let venues: Vec<&str> = ids
+    let ids: Vec64<i64> = (first..first + n as i64).collect();
+    let venues: Vec64<&str> = ids
         .iter()
         .map(|id| if id % 2 == 0 { "XNAS" } else { "XNYS" })
         .collect();
     Table::new(
         "trades".to_string(),
-        vec![
-            FieldArray::from_arr("id", Array::from_int64(IntegerArray::from_slice(&ids))),
-            FieldArray::from_arr(
-                "venue",
-                Array::from_string32(StringArray::from_slice(&venues)),
-            ),
-        ]
-        .into(),
+        vec![fa_i64!("id", @vec64 ids), fa_str32!("venue", @vec64 venues)].into(),
     )
 }
 
@@ -223,7 +216,7 @@ pub mod parquet {
 
     pub fn chunked_parquet_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-parquet/run");
-        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None, None).unwrap();
         for first in [0, 10, 20] {
             writer.write_chunk(&sample_table(first, 10)).unwrap();
         }
@@ -235,7 +228,7 @@ pub mod parquet {
 
     pub fn parallel_chunk_writes_reach_the_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-parquet/parallel");
-        let writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        let writer = ChunkedParquetWriter::new(&dir, "trades", None, None).unwrap();
         let tables: Vec<Table> = (0..6).map(|i| sample_table(i * 5, 5)).collect();
         let refs: Vec<&Table> = tables.iter().collect();
         writer.par_write_all(&refs, Some(3)).unwrap();
@@ -247,7 +240,7 @@ pub mod parquet {
 
     pub fn chunked_parquet_loads_as_a_super_table(base: &str) {
         let dir = format!("{base}/chunked-parquet/super-table");
-        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None, None).unwrap();
         for first in [0, 10, 20, 30] {
             writer.write_chunk(&sample_table(first, 10)).unwrap();
         }
@@ -273,12 +266,20 @@ pub mod arrow_chunks {
     use super::*;
     use lightstream::models::readers::chunked::arrow::ChunkedArrowReader;
     use lightstream::models::writers::chunked::arrow::ChunkedArrowWriter;
+    #[cfg(feature = "datetime")]
+    use lightstream::models::writers::chunked::partition::PartitionType;
     use lightstream::traits::chunked_table_reader::ChunkedTableReader;
     use lightstream::traits::chunked_table_writer::ChunkedTableWriter;
 
+    /// 2026-02-09T07:00:00Z in epoch nanoseconds.
+    #[cfg(feature = "datetime")]
+    const SEVEN_AM: u64 = 1_770_620_400_000_000_000;
+    #[cfg(feature = "datetime")]
+    const ONE_HOUR: u64 = 3_600_000_000_000;
+
     pub fn chunked_arrow_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-arrow/run");
-        let mut writer = ChunkedArrowWriter::new(&dir, "trades").unwrap();
+        let mut writer = ChunkedArrowWriter::new(&dir, "trades", None).unwrap();
         for first in [0, 7, 14] {
             writer.write_chunk(&sample_table(first, 7)).unwrap();
         }
@@ -286,6 +287,30 @@ pub mod arrow_chunks {
         let reader = ChunkedArrowReader::open(&dir, "trades", ()).unwrap();
         let tables: Vec<Table> = reader.map(|chunk| chunk.unwrap()).collect();
         assert_eq!(ids(&tables), (0..21).collect::<Vec<_>>());
+    }
+
+    #[cfg(feature = "datetime")]
+    pub fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix(base: &str) {
+        let dir = format!("{base}/chunked-arrow/partitioned");
+        let mut writer = ChunkedArrowWriter::new(&dir, "trades", Some(PartitionType::Auto)).unwrap();
+        // Written out of time order: ids 10..20 at 08:00, then 0..10 at 07:00.
+        let eight = writer
+            .write_chunk_for_time(&sample_table(10, 10), SEVEN_AM + ONE_HOUR)
+            .unwrap();
+        writer.write_chunk_for_time(&sample_table(0, 10), SEVEN_AM).unwrap();
+        assert_eq!(
+            eight.to_str().unwrap(),
+            format!("{dir}/date=2026-02-09/hour=08/trades-0000000000.arrow")
+        );
+
+        let all = ChunkedArrowReader::open(&dir, "trades", ()).unwrap();
+        let tables: Vec<Table> = all.map(|chunk| chunk.unwrap()).collect();
+        assert_eq!(ids(&tables), (0..20).collect::<Vec<_>>());
+
+        let hour = format!("{dir}/date=2026-02-09/hour=07");
+        let seven = ChunkedArrowReader::open(&hour, "trades", ()).unwrap();
+        let tables: Vec<Table> = seven.map(|chunk| chunk.unwrap()).collect();
+        assert_eq!(ids(&tables), (0..10).collect::<Vec<_>>());
     }
 }
 
@@ -313,7 +338,7 @@ pub mod csv {
 
     pub fn chunked_csv_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-csv/run");
-        let mut writer = ChunkedCsvWriter::new(&dir, "trades", Default::default()).unwrap();
+        let mut writer = ChunkedCsvWriter::new(&dir, "trades", Default::default(), None).unwrap();
         for first in [0, 4] {
             writer.write_chunk(&sample_table(first, 4)).unwrap();
         }

@@ -124,7 +124,7 @@ fn bench_chunked_arrow(c: &mut Criterion) {
     // throughput measurements.
     let read_dir = fresh_dir("arrow_read");
     {
-        let mut w = ChunkedArrowWriter::new(&read_dir, BASE).unwrap();
+        let mut w = ChunkedArrowWriter::new(&read_dir, BASE, None).unwrap();
         for t in &tables {
             w.write_chunk(t).unwrap();
         }
@@ -142,14 +142,14 @@ fn bench_chunked_arrow(c: &mut Criterion) {
     //
     // Directory cleanup runs in the next iteration's setup and is not timed.
     let write_serial_logical = |dir: PathBuf| {
-        let mut w = ChunkedArrowWriter::new(&dir, BASE).unwrap();
+        let mut w = ChunkedArrowWriter::new(&dir, BASE, None).unwrap();
         for t in &tables {
             w.write_chunk(t).unwrap();
         }
     };
 
     let write_serial_physical = |dir: PathBuf| {
-        let mut w = ChunkedArrowWriter::new(&dir, BASE).unwrap();
+        let mut w = ChunkedArrowWriter::new(&dir, BASE, None).unwrap();
         let mut paths: Vec<PathBuf> = Vec::with_capacity(N_CHUNKS);
 
         for t in &tables {
@@ -183,12 +183,12 @@ fn bench_chunked_arrow(c: &mut Criterion) {
     });
 
     let par_write_logical = |dir: PathBuf| {
-        let w = ChunkedArrowWriter::new(&dir, BASE).unwrap();
+        let w = ChunkedArrowWriter::new(&dir, BASE, None).unwrap();
         let paths = w.par_write_all(&table_refs, None).unwrap();
         assert_eq!(paths.len(), N_CHUNKS);
     };
     let par_write_physical = |dir: PathBuf| {
-        let w = ChunkedArrowWriter::new(&dir, BASE).unwrap();
+        let w = ChunkedArrowWriter::new(&dir, BASE, None).unwrap();
         let paths = w.par_write_all(&table_refs, None).unwrap();
         assert_eq!(paths.len(), N_CHUNKS);
         for p in &paths {
@@ -269,7 +269,7 @@ fn bench_chunked_parquet(c: &mut Criterion) {
     // Pre-write the dataset once to learn the real physical byte count.
     let read_dir = fresh_dir("parquet_read");
     {
-        let mut w = ChunkedParquetWriter::new(&read_dir, BASE, None).unwrap();
+        let mut w = ChunkedParquetWriter::new(&read_dir, BASE, None, None).unwrap();
         for t in &tables {
             w.write_chunk(t).unwrap();
         }
@@ -285,13 +285,13 @@ fn bench_chunked_parquet(c: &mut Criterion) {
     // dir. Denominator = output file bytes. Cleanup of the chunk dir
     // is NOT in the timed region.
     let write_serial_logical = |dir: PathBuf| {
-        let mut w = ChunkedParquetWriter::new(&dir, BASE, None).unwrap();
+        let mut w = ChunkedParquetWriter::new(&dir, BASE, None, None).unwrap();
         for t in &tables {
             w.write_chunk(t).unwrap();
         }
     };
     let write_serial_physical = |dir: PathBuf| {
-        let mut w = ChunkedParquetWriter::new(&dir, BASE, None).unwrap();
+        let mut w = ChunkedParquetWriter::new(&dir, BASE, None, None).unwrap();
         let mut paths: Vec<PathBuf> = Vec::with_capacity(N_CHUNKS);
         for t in &tables {
             paths.push(w.write_chunk(t).unwrap());
@@ -321,12 +321,12 @@ fn bench_chunked_parquet(c: &mut Criterion) {
     });
 
     let par_write_logical = |dir: PathBuf| {
-        let w = ChunkedParquetWriter::new(&dir, BASE, None).unwrap();
+        let w = ChunkedParquetWriter::new(&dir, BASE, None, None).unwrap();
         let paths = w.par_write_all(&table_refs, None).unwrap();
         assert_eq!(paths.len(), N_CHUNKS);
     };
     let par_write_physical = |dir: PathBuf| {
-        let w = ChunkedParquetWriter::new(&dir, BASE, None).unwrap();
+        let w = ChunkedParquetWriter::new(&dir, BASE, None, None).unwrap();
         let paths = w.par_write_all(&table_refs, None).unwrap();
         assert_eq!(paths.len(), N_CHUNKS);
         for p in &paths {
@@ -405,7 +405,7 @@ fn bench_chunked_csv(c: &mut Criterion) {
     // Pre-write the dataset once to learn the real physical byte count.
     let read_dir = fresh_dir("csv_read");
     {
-        let mut w = ChunkedCsvWriter::new(&read_dir, BASE, CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&read_dir, BASE, CsvEncodeOptions::default(), None).unwrap();
         for t in &tables {
             w.write_chunk(t).unwrap();
         }
@@ -420,14 +420,14 @@ fn bench_chunked_csv(c: &mut Criterion) {
     // Physical writes synchronise each chunk and the parent directory, and use the
     // encoded file size. Directory cleanup runs outside the timed region.
     let write_serial_logical = |dir: PathBuf| {
-        let mut w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default(), None).unwrap();
         for t in &tables {
             w.write_chunk(t).unwrap();
         }
     };
     
     let write_serial_physical = |dir: PathBuf| {
-        let mut w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default(), None).unwrap();
         let mut paths: Vec<PathBuf> = Vec::with_capacity(N_CHUNKS);
         for t in &tables {
             paths.push(w.write_chunk(t).unwrap());
@@ -457,12 +457,12 @@ fn bench_chunked_csv(c: &mut Criterion) {
     });
 
     let par_write_logical = |dir: PathBuf| {
-        let w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default()).unwrap();
+        let w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default(), None).unwrap();
         let paths = w.par_write_all(&table_refs, None).unwrap();
         assert_eq!(paths.len(), N_CHUNKS);
     };
     let par_write_physical = |dir: PathBuf| {
-        let w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default()).unwrap();
+        let w = ChunkedCsvWriter::new(&dir, BASE, CsvEncodeOptions::default(), None).unwrap();
         let paths = w.par_write_all(&table_refs, None).unwrap();
         assert_eq!(paths.len(), N_CHUNKS);
         for p in &paths {

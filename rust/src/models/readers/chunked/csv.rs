@@ -9,8 +9,10 @@
 //! Reads a directory of `<base>-NNNNNNNNNN.csv` files emitted by
 //! `ChunkedCsvWriter` and presents them as an ordered iterator of `Table`s.
 //! Each chunk file is a complete, independently parseable CSV (header +
-//! rows). The reader sorts files by their numeric index so consumers see
-//! batches in write order.
+//! rows). The reader includes files in nested partition
+//! directories and sorts files by partition directory and then by numeric
+//! index. Consumers of an unpartitioned directory see batches in write
+//! order.
 //!
 //! Inherits [`ChunkedTableReader::par_load_batched`] for sync parallel
 //! decode across chunk files.
@@ -24,7 +26,7 @@ use minarrow::{ColumnSelection, Concatenate, SuperTable, Table};
 
 use crate::models::decoders::csv::CsvDecodeOptions;
 use crate::models::readers::csv::CsvReader;
-use crate::models::readers::object_storage::{StorageReader, list_dir};
+use crate::models::readers::object_storage::{StorageReader, list_files};
 use crate::traits::chunked_table_reader::ChunkedTableReader;
 
 /// Per-format `Options` for `ChunkedCsvReader::open`.
@@ -78,7 +80,7 @@ impl ChunkedTableReader for ChunkedCsvReader {
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> io::Result<Vec<PathBuf>> {
         let prefix = format!("{base}-");
         let mut indexed: Vec<(u64, PathBuf)> = Vec::new();
-        for path in list_dir(dir)? {
+        for path in list_files(dir)? {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -91,7 +93,12 @@ impl ChunkedTableReader for ChunkedCsvReader {
             };
             indexed.push((index, path));
         }
-        indexed.sort_by_key(|(i, _)| *i);
+        // Order by partition directory, then by index within it, which is
+        // write order for an unpartitioned directory and time order for
+        // `PartitionType::Auto` partitions.
+        indexed.sort_by(|(a_index, a), (b_index, b)| {
+            a.parent().cmp(&b.parent()).then(a_index.cmp(b_index))
+        });
         Ok(indexed.into_iter().map(|(_, p)| p).collect())
     }
 
@@ -171,7 +178,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_test_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 1, 2, 3)])))
             .unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 4, 5)])))
@@ -203,7 +210,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_par_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         for i in 0..12i32 {
             w.write_chunk(&Table::new(
                 "b",
@@ -244,7 +251,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_test_iter");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 10)])))
             .unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 20, 21)])))

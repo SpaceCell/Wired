@@ -250,7 +250,8 @@ pub mod models {
         pub mod parquet;
 
         /// Chunked file readers - glob a directory of `<base>-NNNNN.<ext>`
-        /// files and present them as an ordered iterator of `Table`s.
+        /// files, including its partition directories, and present them as
+        /// an ordered iterator of `Table`s.
         pub mod chunked {
             /// Chunked CSV reader.
             #[cfg(feature = "csv")]
@@ -360,6 +361,9 @@ pub mod models {
             /// Chunked Arrow IPC writer. Holds a tokio runtime internally
             /// to drive the async IPC file writer.
             pub mod arrow;
+
+            /// Partition paths for the chunked writers.
+            pub mod partition;
         }
 
         /// TCP table writer

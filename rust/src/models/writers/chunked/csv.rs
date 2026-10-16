@@ -26,6 +26,7 @@ use std::sync::atomic::AtomicU64;
 use minarrow::Table;
 
 use crate::models::encoders::csv::CsvEncodeOptions;
+use crate::models::writers::chunked::partition::PartitionType;
 use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::csv::CsvWriter;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
@@ -42,13 +43,23 @@ pub struct ChunkedCsvWriter {
     base: String,
     options: CsvEncodeOptions,
     next_index: AtomicU64,
+    partition: Option<PartitionType>,
 }
 
 impl ChunkedCsvWriter {
     /// Create a new chunked writer rooted at `dir`. Each chunk filename
     /// will be `<base>-NNNNNNNNNN.csv` with a 10-digit zero-padded
     /// index. The directory is created if it does not exist.
-    pub fn new<P: AsRef<Path>>(dir: P, base: &str, options: CsvEncodeOptions) -> io::Result<Self> {
+    ///
+    /// `partition` places each chunk in a partition directory beneath `dir`,
+    /// for example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.csv`.
+    /// `None` writes every chunk into `dir`.
+    pub fn new<P: AsRef<Path>>(
+        dir: P,
+        base: &str,
+        options: CsvEncodeOptions,
+        partition: Option<PartitionType>,
+    ) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         create_dir_all(&dir)?;
         Ok(Self {
@@ -56,6 +67,7 @@ impl ChunkedCsvWriter {
             base: base.to_string(),
             options,
             next_index: AtomicU64::new(0),
+            partition,
         })
     }
 }
@@ -84,6 +96,11 @@ impl ChunkedTableWriter for ChunkedCsvWriter {
         &self.next_index
     }
 
+    /// Partitioning applied to chunk paths, if configured.
+    fn partition(&self) -> Option<&PartitionType> {
+        self.partition.as_ref()
+    }
+
     /// Encode `table` as a complete CSV file at `path` using the writer's
     /// configured encode options. Shared per-format encode path used by
     /// both `write_chunk` and `par_write_all`.
@@ -109,7 +126,7 @@ mod tests {
     fn writes_indexed_chunk_files() {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_test_writer");
         let _ = fs::remove_dir_all(&dir);
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         let p0 = w
             .write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 0, 1, 2)])))
             .unwrap();
@@ -143,7 +160,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_par_writer");
         let _ = fs::remove_dir_all(&dir);
 
-        let w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         let tables: Vec<Table> = (0..10i32)
             .map(|i| Table::new("b", Some(vec![fa_i32!("n", i, i + 100)])))
             .collect();

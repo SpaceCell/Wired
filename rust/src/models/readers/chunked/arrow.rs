@@ -9,8 +9,10 @@
 //! Reads a directory of `<base>-NNNNNNNNNN.arrow` files emitted by
 //! `ChunkedArrowWriter` and presents them as an ordered iterator of
 //! `Table`s. Each chunk file is a complete, independently readable Arrow
-//! IPC file. The reader sorts files by their numeric index so consumers
-//! see batches in write order.
+//! IPC file. The reader includes files in nested partition
+//! directories and sorts files by partition directory and then by numeric
+//! index. Consumers of an unpartitioned directory see batches in write
+//! order.
 //!
 //! ## Concurrency model
 //!
@@ -36,7 +38,7 @@ use std::sync::Arc;
 use minarrow::{Concatenate, SuperTable, Table};
 
 use crate::models::readers::ipc::file_table::FileTableReader;
-use crate::models::readers::object_storage::list_dir;
+use crate::models::readers::object_storage::list_files;
 use crate::traits::chunked_table_reader::ChunkedTableReader;
 
 /// Iterator over chunk files in a directory written by
@@ -64,7 +66,7 @@ impl ChunkedTableReader for ChunkedArrowReader {
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> io::Result<Vec<PathBuf>> {
         let prefix = format!("{base}-");
         let mut indexed: Vec<(u64, PathBuf)> = Vec::new();
-        for path in list_dir(dir)? {
+        for path in list_files(dir)? {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -77,7 +79,12 @@ impl ChunkedTableReader for ChunkedArrowReader {
             };
             indexed.push((index, path));
         }
-        indexed.sort_by_key(|(i, _)| *i);
+        // Order by partition directory, then by index within it, which is
+        // write order for an unpartitioned directory and time order for
+        // `PartitionType::Auto` partitions.
+        indexed.sort_by(|(a_index, a), (b_index, b)| {
+            a.parent().cmp(&b.parent()).then(a_index.cmp(b_index))
+        });
         Ok(indexed.into_iter().map(|(_, p)| p).collect())
     }
 
@@ -140,16 +147,31 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use std::sync::Arc;
+
     use crate::models::writers::chunked::arrow::ChunkedArrowWriter;
+    use crate::models::writers::chunked::partition::PartitionType;
     use crate::traits::chunked_table_writer::ChunkedTableWriter;
-    use minarrow::{Table, fa_i32};
+    use minarrow::{Table, Vec64, fa_i32};
+
+    /// 2026-02-09T07:00:00Z and 08:00:00Z in epoch nanoseconds.
+    #[cfg(feature = "datetime")]
+    const SEVEN_AM: u64 = 1_770_620_400_000_000_000;
+    #[cfg(feature = "datetime")]
+    const EIGHT_AM: u64 = SEVEN_AM + 3_600_000_000_000;
+
+    /// Table of `n_rows` rows, identifying each chunk by its row count.
+    fn rows(n_rows: i32) -> Table {
+        let values: Vec64<i32> = (0..n_rows).collect();
+        Table::new("b", Some(vec![fa_i32!("n", @vec64 values)]))
+    }
 
     #[test]
     fn par_load_batched_returns_batches_in_write_order() {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_par_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedArrowWriter::new(&dir, "part").unwrap();
+        let mut w = ChunkedArrowWriter::new(&dir, "part", None).unwrap();
         for i in 0..16i32 {
             w.write_chunk(&Table::new(
                 "b",
@@ -184,6 +206,74 @@ mod tests {
         let st = ChunkedArrowReader::par_load_batched(&dir, "part", (), None).unwrap();
         assert!(st.batches.is_empty());
         assert_eq!(st.n_rows, 0);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(feature = "datetime")]
+    #[test]
+    fn auto_partitioned_chunks_read_back_by_partition_then_index() {
+        let dir = std::env::temp_dir().join("lightstream_chunked_arrow_auto_partition");
+        let _ = fs::remove_dir_all(&dir);
+
+        let mut w = ChunkedArrowWriter::new(&dir, "part", Some(PartitionType::Auto)).unwrap();
+        let p0 = w.write_chunk_for_time(&rows(1), EIGHT_AM).unwrap();
+        let p1 = w.write_chunk_for_time(&rows(2), SEVEN_AM).unwrap();
+        let p2 = w.write_chunk_for_time(&rows(3), EIGHT_AM).unwrap();
+        assert_eq!(p0, dir.join("date=2026-02-09/hour=08/part-0000000000.arrow"));
+        assert_eq!(p1, dir.join("date=2026-02-09/hour=07/part-0000000001.arrow"));
+        assert_eq!(p2, dir.join("date=2026-02-09/hour=08/part-0000000002.arrow"));
+
+        // The 07:00 chunk precedes both 08:00 chunks, which keep write order.
+        let all = ChunkedArrowReader::open(&dir, "part", ()).unwrap().load_batched().unwrap();
+        let n_rows: Vec<usize> = all.batches.iter().map(|batch| batch.n_rows).collect();
+        assert_eq!(n_rows, vec![2, 1, 3]);
+
+        // Opening a partition directory reads only that partition.
+        let eight = ChunkedArrowReader::open(dir.join("date=2026-02-09/hour=08"), "part", ())
+            .unwrap()
+            .load_batched()
+            .unwrap();
+        let n_rows: Vec<usize> = eight.batches.iter().map(|batch| batch.n_rows).collect();
+        assert_eq!(n_rows, vec![1, 3]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn custom_partitions_come_from_the_table() {
+        let dir = std::env::temp_dir().join("lightstream_chunked_arrow_custom_partition");
+        let _ = fs::remove_dir_all(&dir);
+
+        let by_size = PartitionType::Custom(Arc::new(|table: &Table, _time: u64| {
+            format!("rows={}", table.n_rows)
+        }));
+        let mut w = ChunkedArrowWriter::new(&dir, "part", Some(by_size)).unwrap();
+        let path = w.write_chunk(&rows(4)).unwrap();
+        assert_eq!(path, dir.join("rows=4/part-0000000000.arrow"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(feature = "datetime")]
+    #[test]
+    fn par_write_all_creates_partition_directories() {
+        let dir = std::env::temp_dir().join("lightstream_chunked_arrow_par_partition");
+        let _ = fs::remove_dir_all(&dir);
+
+        let w = ChunkedArrowWriter::new(&dir, "part", Some(PartitionType::Auto)).unwrap();
+        let tables: Vec<Table> = (1..=6).map(rows).collect();
+        let refs: Vec<&Table> = tables.iter().collect();
+        let paths = w.par_write_all(&refs, Some(3)).unwrap();
+
+        // Batches written in one call share a single partition.
+        let partition = paths[0].parent().unwrap();
+        assert!(partition.starts_with(&dir) && partition != dir);
+        assert!(paths.iter().all(|path| path.parent() == Some(partition)));
+
+        let read = ChunkedArrowReader::par_load_batched(&dir, "part", (), None).unwrap();
+        let n_rows: Vec<usize> = read.batches.iter().map(|batch| batch.n_rows).collect();
+        assert_eq!(n_rows, vec![1, 2, 3, 4, 5, 6]);
 
         fs::remove_dir_all(&dir).ok();
     }
