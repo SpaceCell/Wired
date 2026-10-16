@@ -266,12 +266,15 @@ pub mod arrow_chunks {
     use super::*;
     use lightstream::models::readers::chunked::arrow::ChunkedArrowReader;
     use lightstream::models::writers::chunked::arrow::ChunkedArrowWriter;
+    #[cfg(feature = "datetime_ops")]
     use lightstream::models::writers::chunked::partition::PartitionType;
     use lightstream::traits::chunked_table_reader::ChunkedTableReader;
     use lightstream::traits::chunked_table_writer::ChunkedTableWriter;
 
     /// 2026-02-09T07:00:00Z in epoch nanoseconds.
+    #[cfg(feature = "datetime_ops")]
     const SEVEN_AM: u64 = 1_770_620_400_000_000_000;
+    #[cfg(feature = "datetime_ops")]
     const ONE_HOUR: u64 = 3_600_000_000_000;
 
     pub fn chunked_arrow_round_trips_beneath_an_object_prefix(base: &str) {
@@ -286,6 +289,7 @@ pub mod arrow_chunks {
         assert_eq!(ids(&tables), (0..21).collect::<Vec<_>>());
     }
 
+    #[cfg(feature = "datetime_ops")]
     pub fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-arrow/partitioned");
         let mut writer = ChunkedArrowWriter::new(&dir, "trades", Some(PartitionType::Auto)).unwrap();
