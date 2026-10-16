@@ -64,7 +64,10 @@ with ls.write("s3://telemetry/trades/summary.arrow") as writer:
 | Google Cloud Storage     | `gs://bucket/path`                | `gcp`            |
 | Azure Blob Storage       | `az://container/path`, `abfss://` | `azure`          |
 
-Credentials come from each backend's standard environment variables. `register_options` sets backend options and the upload settings `part_size` and `max_concurrent_parts` for every URL beneath a prefix. Written objects become visible in their store when the writer closes. Memory-mapped reads apply to local files only.
+- Credentials come from each backend's standard environment variables.
+- `register_options` sets backend options, and the upload settings `part_size` and `max_concurrent_parts`, for every URL beneath a prefix.
+- Written objects become visible in their store when the writer closes.
+- Memory-mapped reads apply to local files only.
 
 ### Network transports
 

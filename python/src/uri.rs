@@ -139,8 +139,7 @@ fn resolve_protocol(protocol: Option<&str>) -> PyResult<WireProtocol> {
 /// A URI resolved to its addressing form. Wire endpoints carry the
 /// address their transport connects with.
 enum Endpoint {
-    /// A local file path, or an object URL, which the file readers and
-    /// writers accept in place of a path.
+    /// A local file path or an object URL.
     Path(PathBuf),
     Tcp(String),
     Ws(String),
@@ -1038,9 +1037,9 @@ pub fn resolve_source(
             "mmap applies to local files only",
         ));
     }
-    // Object storage has no directories. An object URL with objects
-    // immediately beneath it addresses a chunk set, and any other object
-    // URL addresses a single object.
+    // Object storage has no directories. An object URL addresses a chunk
+    // set when objects exist immediately beneath it, and a single object
+    // otherwise.
     let chunk_set = if object_url {
         !list_dir(&path)
             .map_err(|e| FormatError::new_err(e.to_string()))?

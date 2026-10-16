@@ -34,19 +34,27 @@ pub use message::PyMessage;
 pub use output::PyDataStreamWriter;
 pub use runtime::{block_on_py, runtime};
 
-/// Opens a source for reading. The scheme picks the medium, `protocol`
-/// picks the wire protocol, and the format comes from `format` or the
-/// path extension. Returns a `Reader` that yields `minarrow.Table`
-/// batches. `accept=True` makes the reader the accepting peer on wire
-/// sources, holding the endpoint bound for the life of the process and
-/// blocking until a writer connects. `parallel` takes a stream count
-/// on TCP sources, where the reader always accepts that many
-/// connections. The quic, wt, wss, and https schemes carry TLS,
-/// taking `tls_cert` and `tls_key` PEM paths on the accepting peer
-/// and a `tls_ca` PEM path on the connecting peer. In builds with the
-/// `object_storage` feature, an object URL such as `s3://bucket/key.parquet`
-/// or `memory:///key.parquet` reads in place of a file path, and an object
-/// prefix with chunk objects beneath it reads as a chunk directory.
+/// Opens a source for reading and returns a `Reader` that yields
+/// `minarrow.Table` batches.
+///
+/// The URI scheme selects the medium and `protocol` selects the wire
+/// protocol. The format comes from `format` or the path extension.
+///
+/// ## Wire sources
+/// - `accept=True` makes the reader the accepting peer. The endpoint stays
+///   bound for the life of the process, and the call blocks until a writer
+///   connects.
+/// - `parallel` sets the stream count on TCP sources, where the reader
+///   accepts that many connections.
+/// - The quic, wt, wss and https schemes use TLS. The accepting peer takes
+///   `tls_cert` and `tls_key` PEM paths, and the connecting peer takes a
+///   `tls_ca` PEM path.
+///
+/// ## Object storage
+/// Builds with the `object_storage` feature accept object URLs, such as
+/// `s3://bucket/key.parquet` or `memory:///key.parquet`, in place of file
+/// paths. An object prefix with chunk objects immediately beneath it reads
+/// as a chunk directory.
 #[pyfunction]
 #[pyo3(signature = (uri, *, format=None, protocol=None, parallel=0, accept=false, tls_cert=None, tls_key=None, tls_ca=None, mmap=None, out_of_core=false, base=None, delimiter=None, header=None, batch_size=None))]
 fn read(
@@ -87,16 +95,24 @@ fn read(
     Ok(PyDataStreamReader::new(resolved))
 }
 
-/// Opens a target for writing. The scheme picks the medium, `protocol`
-/// picks the wire protocol, and the format comes from `format` or the
-/// path extension. Returns a `Writer` accepting any Arrow-compatible
-/// object. `accept=True` makes the writer the accepting peer on wire
-/// targets, holding the endpoint bound for the life of the process and
-/// blocking until a reader connects. The quic, wt, wss, and https
-/// schemes carry TLS, taking `tls_cert` and `tls_key` PEM paths on
-/// the accepting peer and a `tls_ca` PEM path on the connecting peer. In
-/// builds with the `object_storage` feature, an object URL writes in place
-/// of a file path, and the object becomes visible in its store on `close`.
+/// Opens a target for writing and returns a `Writer` that accepts any
+/// Arrow-compatible object.
+///
+/// The URI scheme selects the medium and `protocol` selects the wire
+/// protocol. The format comes from `format` or the path extension.
+///
+/// ## Wire targets
+/// - `accept=True` makes the writer the accepting peer. The endpoint stays
+///   bound for the life of the process, and the call blocks until a reader
+///   connects.
+/// - The quic, wt, wss and https schemes use TLS. The accepting peer takes
+///   `tls_cert` and `tls_key` PEM paths, and the connecting peer takes a
+///   `tls_ca` PEM path.
+///
+/// ## Object storage
+/// Builds with the `object_storage` feature accept object URLs in place of
+/// file paths. Each object becomes visible in its store when the writer
+/// closes.
 #[pyfunction]
 #[pyo3(signature = (uri, *, format=None, protocol=None, parallel=0, accept=false, tls_cert=None, tls_key=None, tls_ca=None, compression=None, delimiter=None, header=None))]
 fn write(
@@ -122,17 +138,29 @@ fn write(
     Ok(PyDataStreamWriter::new(resolved))
 }
 
-/// Sets the options for every object URL beneath `prefix`, such as
-/// `s3://telemetry` or `s3://telemetry/trades`. The options replace any set
-/// earlier for the same prefix, and the longest registered prefix of a URL
-/// supplies its options. Keys are the backend configuration keys, for
-/// example `aws_region`, `aws_endpoint` or `google_service_account`, the
-/// HTTP client keys such as `timeout`, and the upload settings `part_size`
-/// and `max_concurrent_parts`. Values are strings. Settings not given here
-/// are read by the backend from its standard environment variables.
-/// Raises `LightstreamError` when `prefix` is not an object URL or an upload
-/// setting is invalid. Unknown backend keys raise when a URL beneath the
-/// prefix is first opened.
+/// Registers object storage options for every object URL beneath `prefix`,
+/// for example `s3://telemetry` or `s3://telemetry/trades`.
+///
+/// Settings not registered here come from the backend's standard
+/// environment variables, such as `AWS_REGION`.
+///
+/// ## Options
+/// Keys and values are strings. The accepted keys are:
+/// - backend configuration keys, for example `aws_region`, `aws_endpoint`
+///   or `google_service_account`;
+/// - HTTP client keys, for example `timeout`;
+/// - the upload settings `part_size` and `max_concurrent_parts`.
+///
+/// ## Behaviour
+/// - Registering a prefix again replaces its earlier options.
+/// - Each URL uses the options of the longest registered prefix that
+///   contains it.
+///
+/// ## Errors
+/// - Raises `LightstreamError` when `prefix` is not an object URL or an
+///   upload setting is invalid.
+/// - Unknown backend keys raise `LightstreamError` when a URL beneath the
+///   prefix is first opened.
 #[cfg(feature = "object_storage")]
 #[pyfunction(name = "register_options")]
 fn register_object_options(prefix: &str, options: HashMap<String, String>) -> PyResult<()> {

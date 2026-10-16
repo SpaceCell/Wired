@@ -920,8 +920,8 @@ impl PyDataStreamWriter {
     }
 
     /// File targets write through on each batch, so flush delegates to the
-    /// operating system. Objects at object URLs are completed, and become
-    /// visible in their store, on `close`.
+    /// operating system. Objects at object URLs are completed on `close`,
+    /// which makes them visible in their store.
     fn flush(&self) -> PyResult<()> {
         Ok(())
     }
