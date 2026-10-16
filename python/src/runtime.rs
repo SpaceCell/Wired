@@ -7,8 +7,10 @@
 //! # Runtime
 //!
 //! The embedded Tokio runtime that drives the async readers and writers.
-//! File-format paths use the synchronous readers and writers and never
-//! touch it.
+//! File-format reads and writes use the synchronous readers and writers.
+//! With the `object_storage` feature, they enter the runtime on the
+//! calling Python thread, which is outside the runtime's executor, and
+//! object URL requests wait on the runtime through `Handle::block_on`.
 
 use std::sync::OnceLock;
 

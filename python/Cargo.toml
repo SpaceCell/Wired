@@ -45,6 +45,16 @@ lightstream = { version = "0.7", path = "../rust", features = ["mmap", "uds"] }
 [features]
 default = []
 extension-module = ["pyo3/extension-module"]
+# Object storage URLs in place of file paths for `read` and `write`, with
+# the module-level `register_options` function. Enables `memory://` URLs,
+# and the backend features below enable their cloud schemes.
+object_storage = ["lightstream/object_storage"]
+# Amazon S3 and S3-compatible stores (`s3://`, `s3a://`)
+aws = ["object_storage", "lightstream/aws"]
+# Google Cloud Storage (`gs://`)
+gcp = ["object_storage", "lightstream/gcp"]
+# Azure Blob Storage (`az://`, `abfs://`, `abfss://`, `adl://`, `azure://`)
+azure = ["object_storage", "lightstream/azure"]
 
 [[example]]
 name = "tcp_server"

@@ -11,12 +11,15 @@
 //! protocol arm, and the format comes from the `format` argument or the
 //! path extension.
 
+#[cfg(unix)]
 use std::fs;
 use std::io;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use lightstream::compression::Compression;
+#[cfg(feature = "object_storage")]
+use lightstream::enums::BufferChunkSize;
 use lightstream::error::IoError;
 use lightstream::models::decoders::csv::CsvDecodeOptions;
 use lightstream::models::decoders::json::JsonDecodeOptions;
@@ -33,6 +36,7 @@ use lightstream::models::readers::http::HttpTableReader;
 use lightstream::models::readers::parallel::tcp::TcpParallelTableReader;
 use lightstream::models::readers::json::JsonReader;
 use lightstream::models::readers::lightstream::LightstreamReader;
+use lightstream::models::readers::object_storage::list_dir;
 use lightstream::models::readers::stdio::StdinTableReader;
 use lightstream::models::readers::tcp::TcpTableReader;
 #[cfg(unix)]
@@ -41,6 +45,8 @@ use lightstream::models::readers::quic::QuicTableReader;
 use lightstream::enums::IPCMessageProtocol;
 use lightstream::models::readers::websocket::WebSocketTableReader;
 use lightstream::models::readers::webtransport::WebTransportTableReader;
+#[cfg(feature = "object_storage")]
+use lightstream::models::streams::object_store::ObjectByteStream;
 use lightstream::models::streams::websocket::{WsRead, WsWrite};
 use lightstream::models::transports::http::HttpTransport;
 use lightstream::models::transports::quic::QuicTransport;
@@ -50,6 +56,7 @@ use lightstream::models::transports::uds::UdsTransport;
 use lightstream::models::transports::webtransport::WebTransport;
 use lightstream::models::transports::websocket::WebSocketTransport;
 use lightstream::models::writers::lightstream::LightstreamWriter;
+use lightstream::models::writers::object_storage::AsyncStorageWriter;
 use lightstream::traits::chunked_table_reader::ChunkedTableReader;
 use pyo3::PyResult;
 use pyo3::exceptions::PyValueError;
@@ -132,6 +139,7 @@ fn resolve_protocol(protocol: Option<&str>) -> PyResult<WireProtocol> {
 /// A URI resolved to its addressing form. Wire endpoints carry the
 /// address their transport connects with.
 enum Endpoint {
+    /// A local file path or an object URL.
     Path(PathBuf),
     Tcp(String),
     Ws(String),
@@ -145,8 +153,24 @@ enum Endpoint {
     Stdio,
 }
 
+/// URL schemes that address object storage, matching the schemes of
+/// lightstream's object storage backends.
+const OBJECT_SCHEMES: [&str; 9] = [
+    "s3", "s3a", "gs", "az", "adl", "azure", "abfs", "abfss", "memory",
+];
+
+/// True when `path` holds an object URL rather than a local path.
+fn is_object_url(path: &Path) -> bool {
+    path.to_str()
+        .and_then(|text| text.split_once("://"))
+        .is_some_and(|(scheme, _)| {
+            OBJECT_SCHEMES.contains(&scheme.to_ascii_lowercase().as_str())
+        })
+}
+
 /// Splits a URI into its endpoint, raising for schemes whose transport
-/// is not in this build.
+/// is not in this build. Object URLs resolve to path endpoints, keeping
+/// the whole URL.
 fn resolve_endpoint(uri: &str) -> PyResult<Endpoint> {
     if let Some((scheme, rest)) = uri.split_once("://") {
         return match scheme {
@@ -164,6 +188,12 @@ fn resolve_endpoint(uri: &str) -> PyResult<Endpoint> {
             "wt" => Ok(Endpoint::Wt(rest.to_string())),
             "wss" => Ok(Endpoint::Wss(uri.to_string())),
             "https" => Ok(Endpoint::Https(uri.to_string())),
+            #[cfg(feature = "object_storage")]
+            _ if is_object_url(Path::new(uri)) => Ok(Endpoint::Path(PathBuf::from(uri))),
+            #[cfg(not(feature = "object_storage"))]
+            _ if is_object_url(Path::new(uri)) => Err(TransportError::new_err(
+                "object storage URLs require a build with the object_storage feature",
+            )),
             other => Err(TransportError::new_err(format!(
                 "unknown scheme '{}'",
                 other
@@ -291,10 +321,10 @@ fn infer_chunk_base(
     base: Option<&str>,
 ) -> PyResult<(String, Format)> {
     let mut bases: Vec<(String, Format)> = Vec::new();
-    for entry in fs::read_dir(dir).map_err(|e| FormatError::new_err(e.to_string()))? {
-        let entry = entry.map_err(|e| FormatError::new_err(e.to_string()))?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
+    for entry in list_dir(dir).map_err(|e| FormatError::new_err(e.to_string()))? {
+        let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
         let Some((stem, ext_format)) = CHUNK_EXTENSIONS
             .iter()
             .find_map(|(ext, f)| name.strip_suffix(ext).map(|stem| (stem, *f)))
@@ -429,6 +459,16 @@ pub fn resolve_source(
                 return Err(PyValueError::new_err(
                     "format arguments apply to file-format reads, not protocol streams",
                 ));
+            }
+            #[cfg(feature = "object_storage")]
+            if is_object_url(&path) {
+                let object = runtime()
+                    .block_on(ObjectByteStream::open(uri, BufferChunkSize::FileIO))
+                    .map_err(|e| to_py_err(IoError::Io(e)))?;
+                let reader = LightstreamReader::new(object, None);
+                return Ok(input::Source::Stream(input::Protocol::Lightstream(
+                    input::LightstreamIO::Stream(reader),
+                )));
             }
             let file = runtime()
                 .block_on(TokioFile::open(&path))
@@ -988,7 +1028,26 @@ pub fn resolve_source(
     }
     let delimiter_byte = resolve_delimiter(delimiter)?;
 
-    if path.is_dir() {
+    // Object URL requests wait on the embedded runtime from this thread.
+    #[cfg(feature = "object_storage")]
+    let _guard = runtime().enter();
+    let object_url = is_object_url(&path);
+    if object_url && mmap == Some(true) {
+        return Err(FormatError::new_err(
+            "mmap applies to local files only",
+        ));
+    }
+    // Object storage has no directories. An object URL addresses a chunk
+    // set when objects exist immediately beneath it, and a single object
+    // otherwise.
+    let chunk_set = if object_url {
+        !list_dir(&path)
+            .map_err(|e| FormatError::new_err(e.to_string()))?
+            .is_empty()
+    } else {
+        path.is_dir()
+    };
+    if chunk_set {
         let named_format = format.map(Format::from_name).transpose()?;
         let (base, chunk_format) = match (base, named_format) {
             (Some(base), Some(format)) => (base.to_string(), format),
@@ -1034,7 +1093,7 @@ pub fn resolve_source(
     let file_io = match resolved_format {
         Format::Ipc => {
             #[cfg(unix)]
-            {
+            if !object_url {
                 let size = fs::metadata(&path)
                     .map_err(|e| FormatError::new_err(e.to_string()))?
                     .len();
@@ -1147,7 +1206,7 @@ pub fn resolve_target(
                 ));
             }
             let file = runtime()
-                .block_on(TokioFile::create(&path))
+                .block_on(AsyncStorageWriter::create(&path))
                 .map_err(|e| to_py_err(IoError::Io(e)))?;
             let writer = LightstreamWriter::new(Box::new(file) as _);
             return Ok(output::Target::Stream(output::Protocol::Lightstream(
@@ -1715,7 +1774,7 @@ pub fn resolve_target(
             "file targets have no parallel form",
         ));
     }
-    if path.is_dir() {
+    if !is_object_url(&path) && path.is_dir() {
         return Err(FormatError::new_err(
             "chunked directory targets are not available in this build",
         ));
