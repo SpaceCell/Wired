@@ -32,6 +32,7 @@ use lightstream::models::readers::ipc::mmap_table::MmapTableReader;
 use lightstream::models::readers::http::HttpTableReader;
 use lightstream::models::readers::parallel::tcp::TcpParallelTableReader;
 use lightstream::models::readers::json::JsonReader;
+use lightstream::models::readers::object_storage::StorageReader;
 use lightstream::models::readers::parquet::load_parquet_table;
 use lightstream::models::readers::quic::QuicTableReader;
 use lightstream::models::readers::stdio::StdinTableReader;
@@ -98,7 +99,7 @@ pub enum FileIO {
         reader: ChunkedParquetReader,
     },
     Csv {
-        reader: CsvReader<BufReader<File>>,
+        reader: CsvReader<StorageReader>,
     },
     /// CSV text streamed over the stdio wire, one batch per
     /// `batch_size` rows.
@@ -109,7 +110,7 @@ pub enum FileIO {
         reader: ChunkedCsvReader,
     },
     Json {
-        reader: JsonReader<BufReader<File>>,
+        reader: JsonReader<StorageReader>,
     },
 }
 

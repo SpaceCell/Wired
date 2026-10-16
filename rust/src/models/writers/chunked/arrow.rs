@@ -25,7 +25,6 @@
 //! created for chunk writing; callers can drive this directly from any
 //! sync context (e.g. the engine's per-Block invocation path).
 
-use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -33,6 +32,7 @@ use std::sync::atomic::AtomicU64;
 use minarrow::{Field, Table};
 
 use crate::enums::IPCMessageProtocol;
+use crate::models::writers::object_storage::{StorageWriter, create_dir_all};
 use crate::models::writers::ipc::sync_table::SyncTableWriter;
 use crate::traits::chunked_table_writer::ChunkedTableWriter;
 
@@ -57,7 +57,7 @@ impl ChunkedArrowWriter {
     /// open it).
     pub fn new<P: AsRef<Path>>(dir: P, base: &str) -> io::Result<Self> {
         let dir = dir.as_ref().to_path_buf();
-        fs::create_dir_all(&dir)?;
+        create_dir_all(&dir)?;
         Ok(Self {
             dir,
             base: base.to_string(),
@@ -95,7 +95,7 @@ impl ChunkedTableWriter for ChunkedArrowWriter {
     /// `par_write_all`.
     fn write_chunk_at(&self, path: &Path, table: &Table) -> io::Result<()> {
         let schema: Vec<Field> = table.cols.iter().map(|col| (*col.field).clone()).collect();
-        let file = File::create(path)?;
+        let file = StorageWriter::create(path)?;
         let mut writer: SyncTableWriter<_> =
             SyncTableWriter::new(file, schema, IPCMessageProtocol::File, None);
         writer.write_table(table.clone())?;
@@ -106,6 +106,8 @@ impl ChunkedTableWriter for ChunkedArrowWriter {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::models::readers::chunked::arrow::ChunkedArrowReader;
     use crate::traits::chunked_table_reader::ChunkedTableReader;

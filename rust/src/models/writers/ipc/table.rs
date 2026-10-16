@@ -31,7 +31,7 @@ use crate::utils::dict_values;
 use futures_util::sink::SinkExt;
 use minarrow::{Field, Table, TableV};
 #[cfg(not(target_family = "wasm"))]
-use tokio::fs::File;
+use crate::models::writers::object_storage::AsyncStorageWriter;
 use tokio::io::AsyncWrite;
 
 use minarrow::Vec64;
@@ -44,14 +44,14 @@ use std::pin::Pin;
 /// Internally delegates to a wrapped [`GTableSink`] instance.
 pub struct TableWriter<W>
 where
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
 {
     sink: GTableSink<W, Vec64<u8>>,
 }
 
 impl<W> TableWriter<W>
 where
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
 {
     /// Create a new Arrow Table writer. Pass `None` for `compression` to
     /// write uncompressed batches; `Some(codec)` compresses every
@@ -136,7 +136,7 @@ pub async fn write_tables_to_file(
     tables: &[Table],
     schema: Vec<Field>,
 ) -> io::Result<()> {
-    let file = File::create(file_path).await?;
+    let file = AsyncStorageWriter::create(file_path).await?;
     let mut writer = TableWriter::new(file, schema, IPCMessageProtocol::File, None)?;
     // Automatically register any Categorical dictionaries found in the tables.
     for table in tables {
@@ -158,7 +158,7 @@ pub async fn write_table_to_file(
     table: &Table,
     schema: Vec<Field>,
 ) -> io::Result<()> {
-    let file = File::create(file_path).await?;
+    let file = AsyncStorageWriter::create(file_path).await?;
     let mut writer = TableWriter::new(file, schema, IPCMessageProtocol::File, None)?;
     // Automatically register any Categorical dictionaries found in the table.
     for (col_idx, col) in table.cols.iter().enumerate() {
@@ -167,6 +167,8 @@ pub async fn write_table_to_file(
         }
     }
     writer.write_table(table.clone()).await?;
+    // Finishing writes the file footer and completes an object upload.
+    writer.finish().await?;
     Ok(())
 }
 

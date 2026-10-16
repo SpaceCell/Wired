@@ -28,7 +28,6 @@
 //! decode) across worker threads and returns a `SuperTable` with batches
 //! in write order.
 
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -37,6 +36,7 @@ use std::sync::Arc;
 use minarrow::{Concatenate, SuperTable, Table};
 
 use crate::models::readers::ipc::file_table::FileTableReader;
+use crate::models::readers::object_storage::list_dir;
 use crate::traits::chunked_table_reader::ChunkedTableReader;
 
 /// Iterator over chunk files in a directory written by
@@ -64,9 +64,7 @@ impl ChunkedTableReader for ChunkedArrowReader {
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> io::Result<Vec<PathBuf>> {
         let prefix = format!("{base}-");
         let mut indexed: Vec<(u64, PathBuf)> = Vec::new();
-        for entry in fs::read_dir(dir.as_ref())? {
-            let entry = entry?;
-            let path = entry.path();
+        for path in list_dir(dir)? {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -139,6 +137,8 @@ impl Iterator for ChunkedArrowReader {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::models::writers::chunked::arrow::ChunkedArrowWriter;
     use crate::traits::chunked_table_writer::ChunkedTableWriter;

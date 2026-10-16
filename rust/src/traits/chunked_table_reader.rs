@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use minarrow::{Consolidate, SuperTable, Table};
+use tokio::runtime::Handle;
 
 /// Open / load_batched / iterate / par_load_batched shape shared by the
 /// per-format chunked readers.
@@ -169,13 +170,18 @@ pub trait ChunkedTableReader: Iterator<Item = Result<Table, Self::Error>> + Size
         // perfectly balanced work and a one-slot overshoot worst-case.
         // Avoids the Vec doubling growth as each worker pushes results.
         let per_worker_cap = n_files.div_ceil(n_threads);
+        // Worker threads enter the caller's Tokio runtime, when there is
+        // one, which lets object storage paths make their requests on it.
+        let runtime = Handle::try_current().ok();
         let collected: Result<Vec<(usize, Table)>, Self::Error> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(n_threads);
             for _ in 0..n_threads {
                 let next_index = &next_index;
                 let this = &reader;
+                let runtime = &runtime;
                 handles.push(
                     s.spawn(move || -> Result<Vec<(usize, Table)>, Self::Error> {
+                        let _runtime = runtime.as_ref().map(Handle::enter);
                         let mut local: Vec<(usize, Table)> = Vec::with_capacity(per_worker_cap);
                         let paths = this.paths();
                         loop {
@@ -233,13 +239,18 @@ pub trait ChunkedTableReader: Iterator<Item = Result<Table, Self::Error>> + Size
         let next_index = AtomicUsize::new(0);
 
         let per_worker_cap = n_files.div_ceil(n_threads);
+        // Worker threads enter the caller's Tokio runtime, when there is
+        // one, which lets object storage paths make their requests on it.
+        let runtime = Handle::try_current().ok();
         let collected: Result<Vec<(usize, Table)>, Self::Error> = std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(n_threads);
             for _ in 0..n_threads {
                 let next_index = &next_index;
                 let this = &reader;
+                let runtime = &runtime;
                 handles.push(
                     s.spawn(move || -> Result<Vec<(usize, Table)>, Self::Error> {
+                        let _runtime = runtime.as_ref().map(Handle::enter);
                         let mut local: Vec<(usize, Table)> = Vec::with_capacity(per_worker_cap);
                         let paths = this.paths();
                         loop {

@@ -35,6 +35,7 @@ use minarrow::{Field, Table, TableV, Vec64};
 
 use crate::compression::Compression;
 use crate::enums::IPCMessageProtocol;
+use crate::models::writers::object_storage::StorageWriter;
 use crate::models::writers::ipc::table_stream::TableStreamWriter;
 use crate::traits::stream_buffer::StreamBuffer;
 use crate::utils::dict_values;
@@ -152,7 +153,7 @@ pub fn write_tables_to_file_sync(
     tables: &[Table],
     schema: Vec<Field>,
 ) -> io::Result<()> {
-    let file = std::fs::File::create(file_path)?;
+    let file = StorageWriter::create(file_path)?;
     let mut writer = SyncTableWriter::<_, Vec64<u8>>::new(file, schema, IPCMessageProtocol::File, None);
     for table in tables {
         writer.write_table(table.clone())?;

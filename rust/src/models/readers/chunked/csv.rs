@@ -15,8 +15,7 @@
 //! Inherits [`ChunkedTableReader::par_load_batched`] for sync parallel
 //! decode across chunk files.
 
-use std::fs::{self, File};
-use std::io::{self, BufReader};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
@@ -25,6 +24,7 @@ use minarrow::{ColumnSelection, Concatenate, SuperTable, Table};
 
 use crate::models::decoders::csv::CsvDecodeOptions;
 use crate::models::readers::csv::CsvReader;
+use crate::models::readers::object_storage::{StorageReader, list_dir};
 use crate::traits::chunked_table_reader::ChunkedTableReader;
 
 /// Per-format `Options` for `ChunkedCsvReader::open`.
@@ -78,9 +78,7 @@ impl ChunkedTableReader for ChunkedCsvReader {
     fn list_paths<P: AsRef<Path>>(dir: P, base: &str) -> io::Result<Vec<PathBuf>> {
         let prefix = format!("{base}-");
         let mut indexed: Vec<(u64, PathBuf)> = Vec::new();
-        for entry in fs::read_dir(dir.as_ref())? {
-            let entry = entry?;
-            let path = entry.path();
+        for path in list_dir(dir)? {
             let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
@@ -98,8 +96,7 @@ impl ChunkedTableReader for ChunkedCsvReader {
     }
 
     fn read_chunk(&self, path: &Path) -> io::Result<Table> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
+        let reader = StorageReader::open(path)?;
         let mut csv = CsvReader::from_reader(
             reader,
             self.options.decode.clone(),
@@ -161,6 +158,8 @@ impl Iterator for ChunkedCsvReader {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::models::encoders::csv::CsvEncodeOptions;
     use crate::models::writers::chunked::csv::ChunkedCsvWriter;

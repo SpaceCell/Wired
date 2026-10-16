@@ -53,7 +53,7 @@ pub type TableSink64<W> = GTableSink<W, Vec64<u8>>;
 /// written into the wider ecosystem.
 pub struct GTableSink<W, B>
 where
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
     B: StreamBuffer + Unpin + 'static,
 {
     pub(crate) schema: Vec<Field>,
@@ -71,7 +71,7 @@ where
 
 impl<W, B> GTableSink<W, B>
 where
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
     B: StreamBuffer + std::fmt::Debug + Unpin + 'static,
 {
     /// Create a new generic Arrow Table writer. Pass `None` for
@@ -136,7 +136,7 @@ where
 
 impl<W, B> Sink<TableV> for GTableSink<W, B>
 where
-    W: AsyncWrite + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
     B: StreamBuffer + std::fmt::Debug + Unpin + 'static,
 {
     type Error = io::Error;

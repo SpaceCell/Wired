@@ -41,13 +41,13 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
 use minarrow::{SuperTable, Table};
 
 use crate::models::encoders::csv::{CsvEncodeOptions, encode_supertable_csv, encode_table_csv};
+use crate::models::writers::object_storage::StorageWriter;
 
 /// A streaming CSV writer for [`minarrow::Table`] and [`minarrow::SuperTable`].
 ///
@@ -109,22 +109,26 @@ impl<W: Write> CsvWriter<W> {
     }
 }
 
-impl CsvWriter<File> {
-    /// Open the given file path and return a `CsvWriter<File>`
-    /// using default options.
+impl CsvWriter<StorageWriter> {
+    /// Create the given file path and return a `CsvWriter` using default
+    /// options.
+    ///
+    /// `path` is a local file path or, with the `object_storage` feature, an
+    /// object URL. An object is completed by [`CsvWriter::flush`].
     pub fn to_path<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = File::create(path)?;
-        Ok(Self::new(file))
+        Ok(Self::new(StorageWriter::create(path)?))
     }
 
-    /// Open the given file path and return a `CsvWriter<File>`
-    /// with custom options.
+    /// Create the given file path and return a `CsvWriter` with custom
+    /// options.
+    ///
+    /// `path` is a local file path or, with the `object_storage` feature, an
+    /// object URL. An object is completed by [`CsvWriter::flush`].
     pub fn to_path_with_options<P: AsRef<Path>>(
         path: P,
         options: CsvEncodeOptions,
     ) -> io::Result<Self> {
-        let file = File::create(path)?;
-        Ok(Self::with_options(file, options))
+        Ok(Self::with_options(StorageWriter::create(path)?, options))
     }
 }
 

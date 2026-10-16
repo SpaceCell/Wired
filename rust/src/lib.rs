@@ -217,6 +217,10 @@ pub mod models {
 
     /// Readers for files, mmap, and async streams
     pub mod readers {
+        /// Read handles over local files and object storage, used by the
+        /// file readers.
+        pub mod object_storage;
+
         /// Arrow IPC readers
         pub mod ipc {
             /// File-based IPC reader
@@ -315,6 +319,10 @@ pub mod models {
 
     /// Writers for Arrow IPC, CSV, and optionally Parquet.
     pub mod writers {
+        /// Write handles over local files and object storage, used by the
+        /// file writers.
+        pub mod object_storage;
+
         pub mod ipc {
             /// Sync IPC stream writer.
             pub mod table_stream;
@@ -477,6 +485,10 @@ pub mod models {
         /// Stdin byte stream adapter.
         #[cfg(feature = "stdio")]
         pub mod stdio;
+
+        /// Object storage byte stream and write adapters.
+        #[cfg(feature = "object_storage")]
+        pub mod object_store;
     }
 
     /// Codecs for Arrow IPC and Lightstream protocol.
@@ -507,6 +519,10 @@ pub mod models {
     #[cfg(feature = "io_uring")]
     pub mod io_uring;
 }
+
+/// Object storage URLs for the file readers and writers.
+#[cfg(feature = "object_storage")]
+pub mod object_storage;
 
 /// FlatBuffers-compiled Arrow IPC metadata support.
 pub mod arrow {
