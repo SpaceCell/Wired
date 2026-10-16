@@ -103,27 +103,19 @@ pub trait ChunkedTableWriter: Sized {
         ))
     }
 
-    /// Build the path for chunk `index` of `table` at `time_ns` epoch
-    /// nanoseconds, creating its partition directory if needed.
+    /// Build the path for chunk `index` of `table`, inside the partition
+    /// directory for `time_ns` epoch nanoseconds when the writer is
+    /// partitioned.
     ///
     /// Without partitioning this is [`Self::chunk_path_for`].
-    fn chunk_path_for_time(
-        &self,
-        table: &Table,
-        time_ns: u64,
-        index: u64,
-    ) -> io::Result<PathBuf> {
-        let Some(partition) = self.partition() else {
-            return Ok(self.chunk_path_for(index));
-        };
-        let dir = self.dir().join(partition.partition(table, time_ns));
-        create_dir_all(&dir)?;
-        Ok(dir.join(format!(
-            "{}-{:010}.{}",
-            self.base(),
-            index,
-            Self::extension()
-        )))
+    fn partitioned_chunk_path(&self, table: &Table, time_ns: u64, index: u64) -> PathBuf {
+        match self.partition() {
+            Some(partition) => self
+                .dir()
+                .join(partition.partition(table, time_ns))
+                .join(format!("{}-{:010}.{}", self.base(), index, Self::extension())),
+            None => self.chunk_path_for(index),
+        }
     }
 
     /// Encode `table` into a complete chunk file at `path`, using any
@@ -150,7 +142,10 @@ pub trait ChunkedTableWriter: Sized {
     /// without partitioning ignore the time.
     fn write_chunk_for_time(&mut self, table: &Table, time_ns: u64) -> Result<PathBuf, Self::Error> {
         let idx = self.counter().fetch_add(1, Ordering::Relaxed);
-        let path = self.chunk_path_for_time(table, time_ns, idx)?;
+        let path = self.partitioned_chunk_path(table, time_ns, idx);
+        if self.partition().is_some() {
+            create_dir_all(path.parent().unwrap_or(self.dir()))?;
+        }
         self.write_chunk_at(&path, table)?;
         Ok(path)
     }
@@ -239,7 +234,10 @@ pub trait ChunkedTableWriter: Sized {
                                 break;
                             }
                             let idx = start + i;
-                            let path = me.chunk_path_for_time(tables[i as usize], time_ns, idx)?;
+                            let path = me.partitioned_chunk_path(tables[i as usize], time_ns, idx);
+                            if me.partition().is_some() {
+                                create_dir_all(path.parent().unwrap_or(me.dir()))?;
+                            }
                             me.write_chunk_at(&path, tables[i as usize])?;
                             local.push((i, path));
                         }
