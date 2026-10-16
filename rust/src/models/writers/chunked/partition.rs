@@ -83,7 +83,6 @@ impl fmt::Debug for PartitionType {
 #[cfg(feature = "datetime")]
 fn auto_partition(time_ns: u64) -> String {
     let time = DatetimeArray::from_slice(&[time_ns as i64], Some(TimeUnit::Nanoseconds));
-    // Every `i64` nanosecond timestamp lies within the supported date range.
     let (year, month, day, hour, ..) = time
         .tuple_dt(0)
         .expect("nanosecond timestamp within the supported date range");

@@ -229,7 +229,7 @@ mod tests {
         let n_rows: Vec<usize> = all.batches.iter().map(|batch| batch.n_rows).collect();
         assert_eq!(n_rows, vec![2, 1, 3]);
 
-        // A partition directory reads that partition alone.
+        // Opening a partition directory reads only that partition.
         let eight = ChunkedArrowReader::open(dir.join("date=2026-02-09/hour=08"), "part", ())
             .unwrap()
             .load_batched()
@@ -266,7 +266,7 @@ mod tests {
         let refs: Vec<&Table> = tables.iter().collect();
         let paths = w.par_write_all(&refs, Some(3)).unwrap();
 
-        // Every batch of one call shares one time and therefore one partition.
+        // Batches written in one call share a single partition.
         let partition = paths[0].parent().unwrap();
         assert!(partition.starts_with(&dir) && partition != dir);
         assert!(paths.iter().all(|path| path.parent() == Some(partition)));
