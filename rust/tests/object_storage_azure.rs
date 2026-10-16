@@ -24,11 +24,15 @@
 //! | `LIGHTSTREAM_AZURE_MAX_CONCURRENT_PARTS` | Optional `max_concurrent_parts` upload setting |
 //! | `LIGHTSTREAM_AZURE_PART_SIZE` | Optional `part_size` upload setting, in bytes |
 //!
-//! `LIGHTSTREAM_AZURE_URL` accepts `az://<container>/<prefix>`, and the
-//! same form with the `adl`, `azure`, `abfs` and `abfss` schemes, with the
-//! account taken from `AZURE_STORAGE_ACCOUNT_NAME`. It also accepts
-//! `abfss://<container>@<account>.dfs.core.windows.net/<prefix>`, which
-//! includes the account. Container names cannot contain dots.
+//! ## URL forms
+//!
+//! - `az://<container>/<prefix>`, or the same form with the `adl`, `azure`,
+//!   `abfs` or `abfss` scheme. The account comes from
+//!   `AZURE_STORAGE_ACCOUNT_NAME`.
+//! - `abfss://<container>@<account>.dfs.core.windows.net/<prefix>`, which
+//!   includes the account.
+//!
+//! Container names cannot contain dots.
 //!
 //! Each check writes beneath its own run prefix,
 //! `<LIGHTSTREAM_AZURE_URL>/lightstream-test-<process>-<time>/<check>`, and
@@ -43,26 +47,13 @@ use std::future::Future;
 
 use object_storage_checks as checks;
 use object_storage_checks::cloud;
-use object_store::ObjectStore;
-use object_store::azure::MicrosoftAzureBuilder;
 
 /// Prefix of the `LIGHTSTREAM_*` environment variables for these tests.
 const ENV_PREFIX: &str = "LIGHTSTREAM_AZURE";
 
-/// Store for an object URL, configured from the `AZURE_*` environment
-/// variables.
-fn store(url: &str) -> Box<dyn ObjectStore> {
-    Box::new(
-        MicrosoftAzureBuilder::from_env()
-            .with_url(url)
-            .build()
-            .unwrap(),
-    )
-}
-
 /// Run a synchronous check against the container, then delete its objects.
 fn run(name: &str, check: fn(&str)) {
-    cloud::run(ENV_PREFIX, store, name, check);
+    cloud::run(ENV_PREFIX, name, check);
 }
 
 /// Run an async check against the container, then delete its objects.
@@ -71,7 +62,7 @@ where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = ()>,
 {
-    cloud::run_async(ENV_PREFIX, store, name, check).await;
+    cloud::run_async(ENV_PREFIX, name, check).await;
 }
 
 #[test]
@@ -189,6 +180,16 @@ fn chunked_arrow_round_trips_beneath_an_object_prefix() {
     run(
         "chunked-arrow",
         checks::arrow_chunks::chunked_arrow_round_trips_beneath_an_object_prefix,
+    );
+}
+
+#[cfg(feature = "datetime")]
+#[test]
+#[ignore = "requires LIGHTSTREAM_AZURE_URL and Azure credentials"]
+fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix() {
+    run(
+        "partitioned-arrow",
+        checks::arrow_chunks::auto_partitioned_chunks_round_trip_beneath_an_object_prefix,
     );
 }
 

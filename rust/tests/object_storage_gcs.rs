@@ -35,26 +35,13 @@ use std::future::Future;
 
 use object_storage_checks as checks;
 use object_storage_checks::cloud;
-use object_store::ObjectStore;
-use object_store::gcp::GoogleCloudStorageBuilder;
 
 /// Prefix of the `LIGHTSTREAM_*` environment variables for these tests.
 const ENV_PREFIX: &str = "LIGHTSTREAM_GCS";
 
-/// Store for an object URL, configured from the `GOOGLE_*` environment
-/// variables and the Application Default Credentials.
-fn store(url: &str) -> Box<dyn ObjectStore> {
-    Box::new(
-        GoogleCloudStorageBuilder::from_env()
-            .with_url(url)
-            .build()
-            .unwrap(),
-    )
-}
-
 /// Run a synchronous check against the bucket, then delete its objects.
 fn run(name: &str, check: fn(&str)) {
-    cloud::run(ENV_PREFIX, store, name, check);
+    cloud::run(ENV_PREFIX, name, check);
 }
 
 /// Run an async check against the bucket, then delete its objects.
@@ -63,7 +50,7 @@ where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = ()>,
 {
-    cloud::run_async(ENV_PREFIX, store, name, check).await;
+    cloud::run_async(ENV_PREFIX, name, check).await;
 }
 
 #[test]
@@ -181,6 +168,16 @@ fn chunked_arrow_round_trips_beneath_an_object_prefix() {
     run(
         "chunked-arrow",
         checks::arrow_chunks::chunked_arrow_round_trips_beneath_an_object_prefix,
+    );
+}
+
+#[cfg(feature = "datetime")]
+#[test]
+#[ignore = "requires LIGHTSTREAM_GCS_URL and Google Cloud credentials"]
+fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix() {
+    run(
+        "partitioned-arrow",
+        checks::arrow_chunks::auto_partitioned_chunks_round_trip_beneath_an_object_prefix,
     );
 }
 

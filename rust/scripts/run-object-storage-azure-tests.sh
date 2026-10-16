@@ -52,4 +52,4 @@ case "$emulator" in
         ;;
 esac
 
-cargo test --features "azure parquet csv json" --test object_storage_azure -- --ignored "$@"
+cargo test --features "azure datetime parquet csv json" --test object_storage_azure -- --ignored "$@"

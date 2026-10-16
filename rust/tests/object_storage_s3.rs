@@ -35,21 +35,13 @@ use std::future::Future;
 
 use object_storage_checks as checks;
 use object_storage_checks::cloud;
-use object_store::ObjectStore;
-use object_store::aws::AmazonS3Builder;
 
 /// Prefix of the `LIGHTSTREAM_*` environment variables for these tests.
 const ENV_PREFIX: &str = "LIGHTSTREAM_S3";
 
-/// Store for an object URL, configured from the `AWS_*` environment
-/// variables.
-fn store(url: &str) -> Box<dyn ObjectStore> {
-    Box::new(AmazonS3Builder::from_env().with_url(url).build().unwrap())
-}
-
 /// Run a synchronous check against the bucket, then delete its objects.
 fn run(name: &str, check: fn(&str)) {
-    cloud::run(ENV_PREFIX, store, name, check);
+    cloud::run(ENV_PREFIX, name, check);
 }
 
 /// Run an async check against the bucket, then delete its objects.
@@ -58,7 +50,7 @@ where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = ()>,
 {
-    cloud::run_async(ENV_PREFIX, store, name, check).await;
+    cloud::run_async(ENV_PREFIX, name, check).await;
 }
 
 #[test]

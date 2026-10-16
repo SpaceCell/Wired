@@ -386,8 +386,7 @@ pub mod json {
 /// Runs the checks against a cloud bucket.
 ///
 /// Each backend's test file supplies the prefix of its `LIGHTSTREAM_*`
-/// environment variables and a function that builds its store from the
-/// backend's own environment configuration. The variables are:
+/// environment variables, which are:
 ///
 /// - `<prefix>_URL`: bucket or container URL with an optional path.
 /// - `<prefix>_MAX_CONCURRENT_PARTS`: optional `max_concurrent_parts`
@@ -397,6 +396,7 @@ pub mod json {
 /// Each check writes beneath its own run prefix,
 /// `<prefix>_URL/lightstream-test-<process>-<time>/<check>`, and the run
 /// prefix is deleted when the check finishes, whether it passes or fails.
+#[cfg(any(feature = "aws", feature = "gcp", feature = "azure"))]
 pub mod cloud {
     use std::env;
     use std::future::Future;
@@ -407,14 +407,16 @@ pub mod cloud {
 
     use futures_util::{FutureExt, TryStreamExt};
     use lightstream::object_storage::register_options;
+    #[cfg(feature = "aws")]
+    use object_store::aws::AmazonS3Builder;
+    #[cfg(feature = "azure")]
+    use object_store::azure::MicrosoftAzureBuilder;
+    #[cfg(feature = "gcp")]
+    use object_store::gcp::GoogleCloudStorageBuilder;
     use object_store::{ObjectStore, ObjectStoreExt, ObjectStoreScheme};
     use url::Url;
 
     use super::runtime;
-
-    /// Builds a backend's store for an object URL from the backend's
-    /// environment configuration.
-    pub type StoreBuilder = fn(&str) -> Box<dyn ObjectStore>;
 
     /// Register the optional upload settings from the environment for the
     /// bucket URL, once per process.
@@ -457,11 +459,32 @@ pub mod cloud {
         )
     }
 
-    /// Delete every object beneath `base`.
-    async fn delete_prefix(store: StoreBuilder, base: &str) {
+    /// Delete every object beneath `base`, using a store configured from the
+    /// backend's environment variables.
+    async fn delete_prefix(base: &str) {
         let url = Url::parse(base).unwrap();
-        let (_, prefix) = ObjectStoreScheme::parse(&url).unwrap();
-        let store = store(base);
+        let (scheme, prefix) = ObjectStoreScheme::parse(&url).unwrap();
+        let store: Box<dyn ObjectStore> = match scheme {
+            #[cfg(feature = "aws")]
+            ObjectStoreScheme::AmazonS3 => {
+                Box::new(AmazonS3Builder::from_env().with_url(base).build().unwrap())
+            }
+            #[cfg(feature = "gcp")]
+            ObjectStoreScheme::GoogleCloudStorage => Box::new(
+                GoogleCloudStorageBuilder::from_env()
+                    .with_url(base)
+                    .build()
+                    .unwrap(),
+            ),
+            #[cfg(feature = "azure")]
+            ObjectStoreScheme::MicrosoftAzure => Box::new(
+                MicrosoftAzureBuilder::from_env()
+                    .with_url(base)
+                    .build()
+                    .unwrap(),
+            ),
+            scheme => panic!("no cloud backend in this build for {scheme:?}"),
+        };
         let objects: Vec<_> = store.list(Some(&prefix)).try_collect().await.unwrap();
         for meta in objects {
             store.delete(&meta.location).await.unwrap();
@@ -470,28 +493,28 @@ pub mod cloud {
 
     /// Run a synchronous check on the test thread, inside an entered
     /// runtime, then delete its objects.
-    pub fn run(env_prefix: &str, store: StoreBuilder, name: &str, check: fn(&str)) {
+    pub fn run(env_prefix: &str, name: &str, check: fn(&str)) {
         let base = check_base(env_prefix, name);
         let runtime = runtime();
         let result = {
             let _entered = runtime.enter();
             catch_unwind(AssertUnwindSafe(|| check(&base)))
         };
-        runtime.block_on(delete_prefix(store, &base));
+        runtime.block_on(delete_prefix(&base));
         if let Err(panic) = result {
             resume_unwind(panic);
         }
     }
 
     /// Run an async check, then delete its objects.
-    pub async fn run_async<F, Fut>(env_prefix: &str, store: StoreBuilder, name: &str, check: F)
+    pub async fn run_async<F, Fut>(env_prefix: &str, name: &str, check: F)
     where
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = ()>,
     {
         let base = check_base(env_prefix, name);
         let result = AssertUnwindSafe(check(base.clone())).catch_unwind().await;
-        delete_prefix(store, &base).await;
+        delete_prefix(&base).await;
         if let Err(panic) = result {
             resume_unwind(panic);
         }

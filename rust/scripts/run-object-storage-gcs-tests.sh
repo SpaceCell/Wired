@@ -47,4 +47,4 @@ else
     echo "Running object storage tests against ${LIGHTSTREAM_GCS_URL}"
 fi
 
-cargo test --features "gcp parquet csv json" --test object_storage_gcs -- --ignored "$@"
+cargo test --features "gcp datetime parquet csv json" --test object_storage_gcs -- --ignored "$@"
