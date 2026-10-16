@@ -155,9 +155,9 @@ mod tests {
     use minarrow::{Table, Vec64, fa_i32};
 
     /// 2026-02-09T07:00:00Z and 08:00:00Z in epoch nanoseconds.
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     const SEVEN_AM: u64 = 1_770_620_400_000_000_000;
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     const EIGHT_AM: u64 = SEVEN_AM + 3_600_000_000_000;
 
     /// Table of `n_rows` rows, identifying each chunk by its row count.
@@ -210,7 +210,7 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     #[test]
     fn auto_partitioned_chunks_read_back_by_partition_then_index() {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_auto_partition");
@@ -255,7 +255,7 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     #[test]
     fn par_write_all_creates_partition_directories() {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_par_partition");

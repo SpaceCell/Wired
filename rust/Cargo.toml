@@ -157,10 +157,7 @@ required-features = ["mmap"]
 default_categorical_8 = ["minarrow/default_categorical_8"]
 extended_categorical = ["default_categorical_8", "minarrow/extended_categorical"]
 large_string = ["minarrow/large_string"]
-datetime = ["minarrow/datetime"]
-# Adds minarrow's datetime operations, which `PartitionType::Auto` uses to
-# format partition dates.
-datetime_ops = ["datetime", "minarrow/datetime_ops"]
+datetime = ["minarrow/datetime", "minarrow/datetime_ops"]
 decimal = ["minarrow/decimal"]
 extended_numeric_types = ["minarrow/extended_numeric_types"]
 lbuffer = ["minarrow/lbuffer"]

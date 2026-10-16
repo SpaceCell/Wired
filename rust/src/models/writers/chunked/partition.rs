@@ -23,7 +23,7 @@
 //! ## Partition types
 //! - [`PartitionType::Auto`] derives the path from the time of each write in
 //!   the `key=value` directory convention, using minarrow's datetime support
-//!   under the `datetime_ops` feature. Query engines such as DuckDB,
+//!   under the `datetime` feature. Query engines such as DuckDB,
 //!   Polars and Spark recognise this convention, using it to prune by path
 //!   and exposing the values as columns.
 //! - [`PartitionType::Custom`] takes the path from a caller-supplied
@@ -39,7 +39,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use minarrow::Table;
-#[cfg(feature = "datetime_ops")]
+#[cfg(feature = "datetime")]
 use minarrow::{DatetimeArray, TimeUnit};
 
 /// How a chunked writer groups its chunks into partition directories.
@@ -48,7 +48,7 @@ pub enum PartitionType {
     /// `date=YYYY-MM-DD/hour=HH` in UTC, from the time of each write.
     ///
     /// Hourly partitions bound the listing a reader needs for any period.
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     Auto,
     /// Partition path returned by the function for each write, given the
     /// Table and its time in epoch nanoseconds.
@@ -62,7 +62,7 @@ impl PartitionType {
     /// Partition path for a write of `table` at `time_ns` epoch nanoseconds.
     pub fn partition(&self, table: &Table, time_ns: u64) -> String {
         match self {
-            #[cfg(feature = "datetime_ops")]
+            #[cfg(feature = "datetime")]
             Self::Auto => auto_partition(time_ns),
             Self::Custom(partition) => partition(table, time_ns),
         }
@@ -72,7 +72,7 @@ impl PartitionType {
 impl fmt::Debug for PartitionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(feature = "datetime_ops")]
+            #[cfg(feature = "datetime")]
             Self::Auto => f.write_str("Auto"),
             Self::Custom(_) => f.write_str("Custom"),
         }
@@ -80,7 +80,7 @@ impl fmt::Debug for PartitionType {
 }
 
 /// Format an epoch-nanosecond time as `date=YYYY-MM-DD/hour=HH` in UTC.
-#[cfg(feature = "datetime_ops")]
+#[cfg(feature = "datetime")]
 fn auto_partition(time_ns: u64) -> String {
     let time = DatetimeArray::from_slice(&[time_ns as i64], Some(TimeUnit::Nanoseconds));
     // Every `i64` nanosecond timestamp lies within the supported date range.
@@ -95,22 +95,22 @@ mod tests {
     use super::*;
 
     /// 2026-02-09T07:48:36.123456789Z
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     const SAMPLE: u64 = 1_770_623_316_123_456_789;
 
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     #[test]
     fn auto_partition_formats_date_and_hour_in_utc() {
         assert_eq!(auto_partition(SAMPLE), "date=2026-02-09/hour=07");
     }
 
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     #[test]
     fn auto_partition_at_the_epoch_is_the_first_hour_of_1970() {
         assert_eq!(auto_partition(0), "date=1970-01-01/hour=00");
     }
 
-    #[cfg(feature = "datetime_ops")]
+    #[cfg(feature = "datetime")]
     #[test]
     fn auto_partition_handles_the_leap_day() {
         // 2024-02-29T23:59:59Z

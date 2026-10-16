@@ -242,7 +242,7 @@ fn chunked_arrow_round_trips_beneath_an_object_prefix() {
     );
 }
 
-#[cfg(feature = "datetime_ops")]
+#[cfg(feature = "datetime")]
 #[test]
 #[ignore = "requires LIGHTSTREAM_S3_URL and AWS credentials"]
 fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix() {
