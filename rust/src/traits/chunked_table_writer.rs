@@ -28,15 +28,17 @@
 //!
 //! ## Partitioning
 //!
-//! A writer configured with a [`PartitionType`] places each chunk in a
-//! partition directory beneath its root, for example
-//! `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.<ext>`. The partition
-//! path comes from the chunk's time, given through
-//! [`ChunkedTableWriter::write_chunk_for_time`]. `write_chunk`, `write_all`
-//! and `par_write_all` use the current system time, and the two `_all`
-//! methods use one time for every batch in the call. Partition directories
-//! are created as they are first written to. Chunk indices come from the
-//! writer's single counter whatever the partition.
+//! Writers configured with a [`PartitionType`] place each chunk in a
+//! partition directory beneath their root, for example
+//! `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.<ext>`.
+//!
+//! - [`ChunkedTableWriter::write_chunk_for_time`] takes the time used for
+//!   the partition path.
+//! - `write_chunk`, `write_all` and `par_write_all` use the current system
+//!   time. The two `_all` methods use one time for every batch in the call.
+//! - Partition directories are created on their first write.
+//! - Chunk indices come from the writer's single counter in every
+//!   partition.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -139,12 +141,13 @@ pub trait ChunkedTableWriter: Sized {
         self.write_chunk_for_time(table, current_time_ns())
     }
 
-    /// Write `table` as the next chunk, with `time_ns` epoch nanoseconds as
-    /// its time for partitioning. Returns the path of the written file.
+    /// Write `table` as the next chunk at `time_ns` epoch nanoseconds and
+    /// return the path of the written file.
     ///
-    /// The time is typically the start of the event-time window that
-    /// produced `table`, which places replayed or late data in the same
-    /// partition as the original. Writers without partitioning ignore it.
+    /// The time selects the partition directory, and is typically the start
+    /// of the event-time window that produced `table`. Replayed or late data
+    /// is then written to the same partition as the original data. Writers
+    /// without partitioning ignore the time.
     fn write_chunk_for_time(&mut self, table: &Table, time_ns: u64) -> Result<PathBuf, Self::Error> {
         let idx = self.counter().fetch_add(1, Ordering::Relaxed);
         let path = self.chunk_path_for_time(table, time_ns, idx)?;

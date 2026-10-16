@@ -11,12 +11,13 @@
 //! `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.parquet`.
 //!
 //! ## Context
-//! Readers locate chunks by listing a directory or object prefix. The
-//! partition path determines how much a reader needs to list to find the
-//! data for one period of time. This matters most on object storage, where
-//! each page of a listing is a separate request.
-//! The chunked readers include chunks in nested partition directories,
-//! and opening a reader on a partition path such as `<dir>/date=2026-10-14`
+//! Readers locate chunks by listing a directory or object prefix, and the
+//! partition path determines how much of a dataset a read for one period of
+//! time needs to list. This matters most on object storage, where each page
+//! of a listing is a separate request.
+//!
+//! The chunked readers include chunks in nested partition directories.
+//! Opening a reader on a partition path, such as `<dir>/date=2026-10-14`,
 //! reads that partition alone.
 //!
 //! ## Partition types
@@ -27,10 +28,11 @@
 //! - [`PartitionType::Custom`] takes the path from a caller-supplied
 //!   function, for schemes keyed on other columns such as venue or symbol.
 //!
-//! The time is supplied by the caller through
+//! ## Time
+//! Callers supply the time through
 //! [`ChunkedTableWriter::write_chunk_for_time`](crate::traits::chunked_table_writer::ChunkedTableWriter::write_chunk_for_time),
-//! for example from the event-time window that produced the chunk. The
-//! other write methods use the current system time.
+//! for example the start of the event-time window that produced the chunk.
+//! The other write methods use the current system time.
 
 use std::fmt;
 use std::sync::Arc;
