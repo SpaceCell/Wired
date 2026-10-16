@@ -31,97 +31,26 @@
 
 mod object_storage_checks;
 
-use std::env;
 use std::future::Future;
-use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
-use std::process;
-use std::sync::Once;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use futures_util::{FutureExt, TryStreamExt};
-use lightstream::object_storage::register_options;
 use object_storage_checks as checks;
-use object_store::aws::AmazonS3Builder;
-use object_store::{ObjectStore, ObjectStoreExt, ObjectStoreScheme};
-use url::Url;
+use object_storage_checks::cloud;
 
-/// Register the optional upload settings from the environment for the
-/// bucket URL, once per process.
-fn register_upload_settings(url: &str) {
-    static REGISTERED: Once = Once::new();
-    REGISTERED.call_once(|| {
-        let settings: Vec<(&str, String)> = [
-            (
-                "max_concurrent_parts",
-                "LIGHTSTREAM_S3_MAX_CONCURRENT_PARTS",
-            ),
-            ("part_size", "LIGHTSTREAM_S3_PART_SIZE"),
-        ]
-        .into_iter()
-        .filter_map(|(key, variable)| env::var(variable).ok().map(|value| (key, value)))
-        .collect();
-        let options: Vec<(&str, &str)> = settings
-            .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .collect();
-        register_options(url, &options).unwrap();
-    });
-}
+/// Prefix of the `LIGHTSTREAM_*` environment variables for these tests.
+const ENV_PREFIX: &str = "LIGHTSTREAM_S3";
 
-/// Base object URL for one check, unique to this process and start time.
-fn check_base(check: &str) -> String {
-    let url = env::var("LIGHTSTREAM_S3_URL")
-        .expect("LIGHTSTREAM_S3_URL is not set, e.g. s3://bucket/prefix");
-    register_upload_settings(&url);
-    let started = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    format!(
-        "{}/lightstream-test-{}-{started}/{check}",
-        url.trim_end_matches('/'),
-        process::id()
-    )
-}
-
-/// Delete every object beneath `base`.
-async fn delete_prefix(base: &str) {
-    let url = Url::parse(base).unwrap();
-    let (_, prefix) = ObjectStoreScheme::parse(&url).unwrap();
-    let store = AmazonS3Builder::from_env().with_url(base).build().unwrap();
-    let objects: Vec<_> = store.list(Some(&prefix)).try_collect().await.unwrap();
-    for meta in objects {
-        store.delete(&meta.location).await.unwrap();
-    }
-}
-
-/// Run a synchronous check on the test thread, inside an entered runtime,
-/// then delete its objects.
+/// Run a synchronous check against the bucket, then delete its objects.
 fn run(name: &str, check: fn(&str)) {
-    let base = check_base(name);
-    let runtime = checks::runtime();
-    let result = {
-        let _entered = runtime.enter();
-        catch_unwind(AssertUnwindSafe(|| check(&base)))
-    };
-    runtime.block_on(delete_prefix(&base));
-    if let Err(panic) = result {
-        resume_unwind(panic);
-    }
+    cloud::run(ENV_PREFIX, name, check);
 }
 
-/// Run an async check, then delete its objects.
+/// Run an async check against the bucket, then delete its objects.
 async fn run_async<F, Fut>(name: &str, check: F)
 where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = ()>,
 {
-    let base = check_base(name);
-    let result = AssertUnwindSafe(check(base.clone())).catch_unwind().await;
-    delete_prefix(&base).await;
-    if let Err(panic) = result {
-        resume_unwind(panic);
-    }
+    cloud::run_async(ENV_PREFIX, name, check).await;
 }
 
 #[test]
