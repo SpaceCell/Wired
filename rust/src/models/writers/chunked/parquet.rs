@@ -45,10 +45,15 @@ impl ChunkedParquetWriter {
     /// Create a new chunked writer rooted at `dir`. Each chunk filename
     /// will be `<base>-NNNNNNNNNN.parquet` with a 10-digit zero-padded
     /// index. The directory is created if it does not exist.
+    ///
+    /// `partition` places each chunk in a partition directory beneath `dir`,
+    /// for example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.parquet`.
+    /// `None` writes every chunk into `dir`.
     pub fn new<P: AsRef<Path>>(
         dir: P,
         base: &str,
         compression: Option<Compression>,
+        partition: Option<PartitionType>,
     ) -> Result<Self, IoError> {
         let dir = dir.as_ref().to_path_buf();
         create_dir_all(&dir)?;
@@ -57,15 +62,8 @@ impl ChunkedParquetWriter {
             base: base.to_string(),
             compression,
             next_index: AtomicU64::new(0),
-            partition: None,
+            partition,
         })
-    }
-
-    /// Place each chunk in a partition directory beneath `dir`, for
-    /// example `<dir>/date=2026-10-14/hour=13/<base>-NNNNNNNNNN.parquet`.
-    pub fn with_partition(mut self, partition: PartitionType) -> Self {
-        self.partition = Some(partition);
-        self
     }
 }
 
@@ -123,7 +121,7 @@ mod tests {
     fn writes_indexed_chunk_files_and_round_trips() {
         let dir = std::env::temp_dir().join("lightstream_chunked_parquet_test_writer");
         let _ = fs::remove_dir_all(&dir);
-        let mut w = ChunkedParquetWriter::new(&dir, "part", None).unwrap();
+        let mut w = ChunkedParquetWriter::new(&dir, "part", None, None).unwrap();
         let p0 = w
             .write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 1, 2, 3)])))
             .unwrap();
@@ -158,7 +156,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_parquet_par_writer");
         let _ = fs::remove_dir_all(&dir);
 
-        let w = ChunkedParquetWriter::new(&dir, "part", None).unwrap();
+        let w = ChunkedParquetWriter::new(&dir, "part", None, None).unwrap();
         let tables: Vec<Table> = (0..6i32)
             .map(|i| Table::new("b", Some(vec![fa_i32!("n", i, i + 100)])))
             .collect();

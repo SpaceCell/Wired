@@ -178,7 +178,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_test_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 1, 2, 3)])))
             .unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 4, 5)])))
@@ -210,7 +210,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_par_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         for i in 0..12i32 {
             w.write_chunk(&Table::new(
                 "b",
@@ -251,7 +251,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_csv_test_iter");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default()).unwrap();
+        let mut w = ChunkedCsvWriter::new(&dir, "part", CsvEncodeOptions::default(), None).unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 10)])))
             .unwrap();
         w.write_chunk(&Table::new("b", Some(vec![fa_i32!("n", 20, 21)])))

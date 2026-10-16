@@ -133,7 +133,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_parquet_par_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedParquetWriter::new(&dir, "part", None).unwrap();
+        let mut w = ChunkedParquetWriter::new(&dir, "part", None, None).unwrap();
         for i in 0..8i32 {
             w.write_chunk(&Table::new(
                 "b",

@@ -223,7 +223,7 @@ pub mod parquet {
 
     pub fn chunked_parquet_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-parquet/run");
-        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None, None).unwrap();
         for first in [0, 10, 20] {
             writer.write_chunk(&sample_table(first, 10)).unwrap();
         }
@@ -235,7 +235,7 @@ pub mod parquet {
 
     pub fn parallel_chunk_writes_reach_the_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-parquet/parallel");
-        let writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        let writer = ChunkedParquetWriter::new(&dir, "trades", None, None).unwrap();
         let tables: Vec<Table> = (0..6).map(|i| sample_table(i * 5, 5)).collect();
         let refs: Vec<&Table> = tables.iter().collect();
         writer.par_write_all(&refs, Some(3)).unwrap();
@@ -247,7 +247,7 @@ pub mod parquet {
 
     pub fn chunked_parquet_loads_as_a_super_table(base: &str) {
         let dir = format!("{base}/chunked-parquet/super-table");
-        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None).unwrap();
+        let mut writer = ChunkedParquetWriter::new(&dir, "trades", None, None).unwrap();
         for first in [0, 10, 20, 30] {
             writer.write_chunk(&sample_table(first, 10)).unwrap();
         }
@@ -283,7 +283,7 @@ pub mod arrow_chunks {
 
     pub fn chunked_arrow_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-arrow/run");
-        let mut writer = ChunkedArrowWriter::new(&dir, "trades").unwrap();
+        let mut writer = ChunkedArrowWriter::new(&dir, "trades", None).unwrap();
         for first in [0, 7, 14] {
             writer.write_chunk(&sample_table(first, 7)).unwrap();
         }
@@ -295,9 +295,7 @@ pub mod arrow_chunks {
 
     pub fn auto_partitioned_chunks_round_trip_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-arrow/partitioned");
-        let mut writer = ChunkedArrowWriter::new(&dir, "trades")
-            .unwrap()
-            .with_partition(PartitionType::Auto);
+        let mut writer = ChunkedArrowWriter::new(&dir, "trades", Some(PartitionType::Auto)).unwrap();
         // Written out of time order: ids 10..20 at 08:00, then 0..10 at 07:00.
         let eight = writer
             .write_chunk_for_time(&sample_table(10, 10), SEVEN_AM + ONE_HOUR)
@@ -343,7 +341,7 @@ pub mod csv {
 
     pub fn chunked_csv_round_trips_beneath_an_object_prefix(base: &str) {
         let dir = format!("{base}/chunked-csv/run");
-        let mut writer = ChunkedCsvWriter::new(&dir, "trades", Default::default()).unwrap();
+        let mut writer = ChunkedCsvWriter::new(&dir, "trades", Default::default(), None).unwrap();
         for first in [0, 4] {
             writer.write_chunk(&sample_table(first, 4)).unwrap();
         }

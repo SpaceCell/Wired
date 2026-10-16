@@ -170,7 +170,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_par_reader");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedArrowWriter::new(&dir, "part").unwrap();
+        let mut w = ChunkedArrowWriter::new(&dir, "part", None).unwrap();
         for i in 0..16i32 {
             w.write_chunk(&Table::new(
                 "b",
@@ -214,9 +214,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_auto_partition");
         let _ = fs::remove_dir_all(&dir);
 
-        let mut w = ChunkedArrowWriter::new(&dir, "part")
-            .unwrap()
-            .with_partition(PartitionType::Auto);
+        let mut w = ChunkedArrowWriter::new(&dir, "part", Some(PartitionType::Auto)).unwrap();
         let p0 = w.write_chunk_for_time(&rows(1), EIGHT_AM).unwrap();
         let p1 = w.write_chunk_for_time(&rows(2), SEVEN_AM).unwrap();
         let p2 = w.write_chunk_for_time(&rows(3), EIGHT_AM).unwrap();
@@ -248,9 +246,7 @@ mod tests {
         let by_size = PartitionType::Custom(Arc::new(|table: &Table, _time: u64| {
             format!("rows={}", table.n_rows)
         }));
-        let mut w = ChunkedArrowWriter::new(&dir, "part")
-            .unwrap()
-            .with_partition(by_size);
+        let mut w = ChunkedArrowWriter::new(&dir, "part", Some(by_size)).unwrap();
         let path = w.write_chunk(&rows(4)).unwrap();
         assert_eq!(path, dir.join("rows=4/part-0000000000.arrow"));
 
@@ -262,9 +258,7 @@ mod tests {
         let dir = std::env::temp_dir().join("lightstream_chunked_arrow_par_partition");
         let _ = fs::remove_dir_all(&dir);
 
-        let w = ChunkedArrowWriter::new(&dir, "part")
-            .unwrap()
-            .with_partition(PartitionType::Auto);
+        let w = ChunkedArrowWriter::new(&dir, "part", Some(PartitionType::Auto)).unwrap();
         let tables: Vec<Table> = (1..=6).map(rows).collect();
         let refs: Vec<&Table> = tables.iter().collect();
         let paths = w.par_write_all(&refs, Some(3)).unwrap();
