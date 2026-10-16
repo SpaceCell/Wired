@@ -29,7 +29,7 @@ use lightstream::models::streams::object_store::{ObjectByteStream, ObjectWrite};
 use lightstream::models::writers::ipc::sync_table::write_tables_to_file_sync;
 use lightstream::models::writers::ipc::table::{TableWriter, write_tables_to_file};
 use lightstream::models::writers::object_storage::StorageWriter;
-use minarrow::{Array, Field, FieldArray, IntegerArray, NumericArray, StringArray, Table};
+use minarrow::{Array, Field, NumericArray, Table, Vec64, fa_i64, fa_str32};
 use tokio::runtime::Runtime;
 use tokio::task::spawn_blocking;
 
@@ -41,21 +41,14 @@ pub fn runtime() -> Runtime {
 
 /// Table of `n` rows whose `id` column starts at `first`.
 pub fn sample_table(first: i64, n: usize) -> Table {
-    let ids: Vec<i64> = (first..first + n as i64).collect();
-    let venues: Vec<&str> = ids
+    let ids: Vec64<i64> = (first..first + n as i64).collect();
+    let venues: Vec64<&str> = ids
         .iter()
         .map(|id| if id % 2 == 0 { "XNAS" } else { "XNYS" })
         .collect();
     Table::new(
         "trades".to_string(),
-        vec![
-            FieldArray::from_arr("id", Array::from_int64(IntegerArray::from_slice(&ids))),
-            FieldArray::from_arr(
-                "venue",
-                Array::from_string32(StringArray::from_slice(&venues)),
-            ),
-        ]
-        .into(),
+        vec![fa_i64!("id", @vec64 ids), fa_str32!("venue", @vec64 venues)].into(),
     )
 }
 

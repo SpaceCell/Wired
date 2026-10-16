@@ -152,7 +152,7 @@ mod tests {
     use crate::models::writers::chunked::arrow::ChunkedArrowWriter;
     use crate::models::writers::chunked::partition::PartitionType;
     use crate::traits::chunked_table_writer::ChunkedTableWriter;
-    use minarrow::{Array, FieldArray, IntegerArray, Table, fa_i32};
+    use minarrow::{Table, Vec64, fa_i32};
 
     /// 2026-02-09T07:00:00Z and 08:00:00Z in epoch nanoseconds.
     const SEVEN_AM: u64 = 1_770_620_400_000_000_000;
@@ -160,9 +160,8 @@ mod tests {
 
     /// Table of `n_rows` rows, identifying each chunk by its row count.
     fn rows(n_rows: i32) -> Table {
-        let values: Vec<i32> = (0..n_rows).collect();
-        let column = FieldArray::from_arr("n", Array::from_int32(IntegerArray::from_slice(&values)));
-        Table::new("b", Some(vec![column]))
+        let values: Vec64<i32> = (0..n_rows).collect();
+        Table::new("b", Some(vec![fa_i32!("n", @vec64 values)]))
     }
 
     #[test]
