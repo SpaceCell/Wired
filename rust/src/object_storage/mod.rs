@@ -54,14 +54,19 @@
 //! still bounded by the client's `connect_timeout`.
 //!
 //! ## Runtime
-//! Object storage I/O runs on the caller's Tokio runtime. The async adapters
-//! in `models::streams::object_store` await their requests. The synchronous
-//! readers and writers spawn each request as a task on the runtime and wait
-//! for its result on a channel. They are called with object URLs from
-//! threads outside the async executor, such as a thread that has entered the
-//! runtime with `Handle::enter` or a `spawn_blocking` task. The parallel
-//! chunked reads and writes enter the caller's runtime on each of their
-//! worker threads.
+//! Object storage requests run as Tokio tasks on the caller's multi-thread
+//! runtime, and the runtime's worker threads perform the I/O.
+//!
+//! - The async adapters in `models::streams::object_store` await their
+//!   requests within the caller's task.
+//! - The synchronous readers and writers spawn each request as a task and
+//!   wait for its result. They find the runtime with `Handle::try_current`,
+//!   which requires the calling thread to be within the runtime's context,
+//!   for example after `Handle::enter`.
+//! - Async code uses the async adapters. A synchronous call made from async
+//!   code holds one of the runtime's workers until its request completes.
+//! - The parallel chunked reads and writes enter the caller's runtime on
+//!   each of their worker threads, and their requests run on that runtime.
 //!
 //! ## HTTP versions
 //! Requests use the `object_store` HTTP client, which is separate from the

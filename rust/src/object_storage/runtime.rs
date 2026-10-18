@@ -6,18 +6,18 @@
 
 //! # Object storage on the caller's runtime
 //!
-//! Object storage requests run as tasks on the caller's Tokio runtime. The
-//! synchronous readers and writers spawn each request on the runtime and
-//! wait for its result on a channel, in the same way as other synchronous
-//! code waits for a worker thread. Multipart uploads spawn their part
-//! uploads on the same handle.
+//! Object storage requests run as Tokio tasks on the caller's multi-thread
+//! runtime. The synchronous readers and writers spawn each request with
+//! [`run_task`] and wait for its result, and multipart uploads spawn their
+//! part uploads on the same runtime.
 //!
-//! The synchronous readers and writers are called with object URLs from
-//! threads outside the async executor, such as a thread that has entered
-//! the runtime with `Handle::enter` or a `spawn_blocking` task. Waiting from
-//! inside an async task holds one of the runtime's workers until the request
-//! completes, and on a current-thread runtime the request never runs. Async
-//! code uses the async adapters in `models::streams::object_store`.
+//! The runtime is the one current on the calling thread, found with
+//! `Handle::try_current`. Synchronous calls therefore come from a thread
+//! within the runtime's context, for example after `Handle::enter`, and
+//! [`current_handle`] reports an error otherwise. Async code uses the async
+//! adapters in `models::streams::object_store`, because a synchronous call
+//! from async code holds one of the runtime's workers until its request
+//! completes.
 
 use std::future::Future;
 use std::io;
