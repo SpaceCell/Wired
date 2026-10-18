@@ -20,6 +20,7 @@
 use std::collections::VecDeque;
 use std::io;
 use std::mem;
+use std::sync::Arc;
 
 use object_store::{MultipartUpload, ObjectStoreExt, PutPayload, PutResult};
 use tokio::runtime::Handle;
@@ -27,7 +28,7 @@ use tokio::task::JoinHandle;
 
 use crate::object_storage::connection::ObjectLocation;
 use crate::object_storage::error::io_error;
-use crate::object_storage::runtime::current_handle;
+use crate::object_storage::runtime::{current_handle, run_task};
 
 /// Upload of one object, driven by synchronous writes.
 ///
@@ -112,9 +113,10 @@ impl ObjectUpload {
         let result = match self.multipart.is_some() {
             false => {
                 let payload = PutPayload::from(mem::take(&mut self.pending));
-                self.runtime
-                    .block_on(self.location.store.put(&self.location.path, payload))
-                    .map_err(io_error)
+                let store = Arc::clone(&self.location.store);
+                let path = self.location.path.clone();
+                run_task(&self.runtime, async move { store.put(&path, payload).await })
+                    .and_then(|result| result.map_err(io_error))
             }
             true => self.complete_multipart(),
         };
@@ -141,26 +143,25 @@ impl ObjectUpload {
             await_part(&self.runtime, part)?;
         }
         let mut upload = self.multipart.take().expect("multipart upload started");
-        self.runtime
-            .block_on(async move {
-                let result = upload.complete().await;
-                // A failed completion leaves the uploaded parts in the store
-                // until they are aborted.
-                if result.is_err() {
-                    let _ = upload.abort().await;
-                }
-                result
-            })
-            .map_err(io_error)
+        run_task(&self.runtime, async move {
+            let result = upload.complete().await;
+            // A failed completion leaves the uploaded parts in the store
+            // until they are aborted.
+            if result.is_err() {
+                let _ = upload.abort().await;
+            }
+            result
+        })
+        .and_then(|result| result.map_err(io_error))
     }
 
     /// Hand `part` to the multipart upload, starting the upload first when
     /// this is the first part.
     fn send_part(&mut self, part: Vec<u8>) -> io::Result<()> {
         if self.multipart.is_none() {
-            let upload = self
-                .runtime
-                .block_on(self.location.store.put_multipart(&self.location.path))
+            let store = Arc::clone(&self.location.store);
+            let path = self.location.path.clone();
+            let upload = run_task(&self.runtime, async move { store.put_multipart(&path).await })?
                 .map_err(io_error)?;
             self.multipart = Some(upload);
         }
@@ -208,8 +209,7 @@ impl Drop for ObjectUpload {
 
 /// Wait for one part upload to finish.
 fn await_part(runtime: &Handle, part: JoinHandle<object_store::Result<()>>) -> io::Result<()> {
-    runtime
-        .block_on(part)
+    run_task(runtime, part)?
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
         .map_err(io_error)
 }
