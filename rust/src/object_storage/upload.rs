@@ -210,6 +210,6 @@ impl Drop for ObjectUpload {
 /// Wait for one part upload to finish.
 fn await_part(runtime: &Handle, part: JoinHandle<object_store::Result<()>>) -> io::Result<()> {
     run_task(runtime, part)?
-    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
-    .map_err(io_error)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+        .map_err(io_error)
 }
