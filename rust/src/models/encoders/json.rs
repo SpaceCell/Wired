@@ -196,10 +196,6 @@ fn collect_null_masks(table: &Table) -> Vec<Option<&Bitmask>> {
             Array::TextArray(TextArray::String32(arr)) => null_masks.push(arr.null_mask.as_ref()),
             #[cfg(feature = "large_string")]
             Array::TextArray(TextArray::String64(arr)) => null_masks.push(arr.null_mask.as_ref()),
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             Array::TextArray(TextArray::Categorical32(arr)) => {
                 null_masks.push(arr.null_mask.as_ref())
             }
@@ -235,10 +231,6 @@ fn collect_cat_maps(table: &Table) -> Vec<Option<&[String]>> {
     let mut cat_maps: Vec<Option<&[String]>> = Vec::with_capacity(table.cols.len());
     for col in &table.cols {
         match &col.array {
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             Array::TextArray(TextArray::Categorical32(arr)) => {
                 cat_maps.push(Some(&arr.unique_values()))
             }
@@ -361,10 +353,6 @@ fn write_cell_value<W: Write>(
             let s = std::str::from_utf8(&arr.data.as_ref()[start..end]).unwrap_or("");
             write_json_string(writer, s)?;
         }
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         Array::TextArray(TextArray::Categorical32(arr)) => {
             let idx = arr.data.as_ref()[row] as usize;
             let val = cat_map

@@ -660,10 +660,6 @@ mod tests {
                     TextArray::String32(arr) if arr.data.is_shared() => shared_count += 1,
                     #[cfg(feature = "large_string")]
                     TextArray::String64(arr) if arr.data.is_shared() => shared_count += 1,
-                    #[cfg(any(
-                        not(feature = "default_categorical_8"),
-                        feature = "extended_categorical"
-                    ))]
                     TextArray::Categorical32(arr) if arr.data.is_shared() => shared_count += 1,
                     #[cfg(feature = "default_categorical_8")]
                     TextArray::Categorical8(arr) if arr.data.is_shared() => shared_count += 1,

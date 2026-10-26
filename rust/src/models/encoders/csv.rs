@@ -206,10 +206,6 @@ pub fn encode_table_csv<W: Write>(
             Array::NumericArray(arr) => null_masks.push(arr.null_mask()),
             Array::BooleanArray(arr) => null_masks.push(arr.null_mask.as_ref()),
             Array::TextArray(TextArray::String32(arr)) => null_masks.push(arr.null_mask.as_ref()),
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             Array::TextArray(TextArray::Categorical32(arr)) => {
                 null_masks.push(arr.null_mask.as_ref())
             }
@@ -367,10 +363,6 @@ pub fn encode_table_csv<W: Write>(
                         quote,
                     );
                 }
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 Array::TextArray(TextArray::Categorical32(arr)) => {
                     // dictionary lookup - always clean UTF-8
                     let idx = arr.data.as_ref()[row] as usize;

@@ -347,10 +347,6 @@ pub(crate) fn compute_body_layout<'a, B: StreamBuffer>(
                 fb_field_nodes.push(fbm::FieldNode::new(len as i64, null_count as i64));
             }
 
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             Array::TextArray(TextArray::Categorical32(arr)) => {
                 push_null_region::<B>(
                     nullable,

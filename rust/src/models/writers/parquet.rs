@@ -178,10 +178,6 @@ pub fn write_parquet_table<W: Write + Seek>(
         if is_dictionary(&col.array) {
             let dict_offset_before = out.stream_position()?;
             match &col.array {
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 Array::TextArray(TextArray::Categorical32(a)) => {
                     let (dict_uncomp, dict_comp) = write_dictionary_page(
                         &mut out,
@@ -340,10 +336,6 @@ pub fn write_parquet_table<W: Write + Seek>(
                 Array::TemporalArray(TemporalArray::Datetime64(a)) => {
                     encode_valid!(encode_temporal64, &a.data[start..end])?
                 }
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 Array::TextArray(TextArray::Categorical32(a)) => {
                     encode_valid!(encode_dictionary_indices_rle, &a.data[start..end])?
                 }
@@ -591,7 +583,10 @@ fn is_dictionary(arr: &Array) -> bool {
     not(feature = "extended_categorical")
 ))]
 fn is_dictionary(arr: &Array) -> bool {
-    matches!(arr, Array::TextArray(TextArray::Categorical8(_)))
+    matches!(
+        arr,
+        Array::TextArray(TextArray::Categorical8(_) | TextArray::Categorical32(_))
+    )
 }
 
 /// true if the array is a (categorical) dictionary array.

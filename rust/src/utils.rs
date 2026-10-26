@@ -94,10 +94,6 @@ macro_rules! debug_println {
 pub(crate) fn dict_values(array: &minarrow::Array) -> Option<Vec<String>> {
     use minarrow::TextArray::*;
     match array {
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         minarrow::Array::TextArray(Categorical32(arr)) => {
             Some(arr.unique_values().iter().cloned().collect())
         }

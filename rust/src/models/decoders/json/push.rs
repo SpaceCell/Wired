@@ -52,10 +52,6 @@ pub fn push_value_into(
         ColumnBuilder::String32(a) => push_string(a, value, policy, row, field)?,
         #[cfg(feature = "large_string")]
         ColumnBuilder::String64(a) => push_string(a, value, policy, row, field)?,
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         ColumnBuilder::Categorical32(a) => push_cat(a, value, policy, row, field)?,
         #[cfg(feature = "default_categorical_8")]
         ColumnBuilder::Categorical8(a) => push_cat(a, value, policy, row, field)?,

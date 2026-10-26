@@ -93,10 +93,6 @@ mod integration {
             StringArray::from_vec(ls_refs, None)
         };
 
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         let cat32 = {
             let cat_keys: Vec64<u32> =
                 Vec64::from_slice(&(0..n as u32).map(|i| i % 3).collect::<Vec<_>>());
@@ -186,10 +182,6 @@ mod integration {
                 Array::TextArray(TextArray::String32(Arc::new(string32))),
             ),
         ];
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         cols.push(FieldArray::new(
             Field::new(
                 "cat32",
@@ -258,10 +250,6 @@ mod integration {
             .iter()
             .enumerate()
             .filter_map(|(i, col)| match &col.array {
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 Array::TextArray(TextArray::Categorical32(arr)) => {
                     Some((i as i64, arr.unique_values.clone()))
                 }

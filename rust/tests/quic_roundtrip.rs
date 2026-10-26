@@ -493,7 +493,6 @@ fn category_labels(table: &Table) -> Vec<String> {
             .iter()
             .map(|&i| arr.unique_values[i as usize].clone())
             .collect(),
-        #[cfg(any(not(feature = "default_categorical_8"), feature = "extended_categorical"))]
         Array::TextArray(TextArray::Categorical32(arr)) => arr
             .data
             .iter()
