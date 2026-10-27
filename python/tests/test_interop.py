@@ -59,7 +59,7 @@ def test_polars_consumes_reader(two_batch_file):
 
 def test_duckdb_queries_reader(two_batch_file):
     reader = pa.RecordBatchReader.from_stream(ls.read(two_batch_file))
-    total = duckdb.sql("SELECT sum(qty) AS total FROM reader").fetchone()[0]
+    total = duckdb.sql("SELECT sum(qty) AS total FROM reader").fetchall()[0][0]
     assert total == 420
 
 
