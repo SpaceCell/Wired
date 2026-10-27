@@ -721,10 +721,6 @@ mod tests {
                         owned_count += 1;
                     }
                 }
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 Array::TextArray(TextArray::Categorical32(a)) => {
                     if a.data.is_shared() {
                         shared_count += 1;
@@ -819,10 +815,6 @@ mod tests {
                         let owned = arr.data.to_owned_copy();
                         assert!(!owned.bits.is_shared());
                     }
-                    #[cfg(any(
-                        not(feature = "default_categorical_8"),
-                        feature = "extended_categorical"
-                    ))]
                     Array::TextArray(TextArray::Categorical32(arr)) => {
                         if arr.data.is_shared() {
                             debug!("Categorical32 is shared");

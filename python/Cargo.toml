@@ -24,8 +24,8 @@ lightstream = { version = "0.7", path = "../rust", features = ["csv", "datetime"
 # minarrow-pyo3's dictionary-index conversion needs the extended features,
 # and they flow through lightstream's flags so its match arms gate in step
 # with minarrow's variants.
-minarrow = { version = "0.18.3", features = ["chunked"] }
-minarrow-pyo3 = { version = "0.18.3", features = ["extended_categorical", "extended_numeric_types"] }
+minarrow = { version = "0.19.0", features = ["chunked"] }
+minarrow-pyo3 = { version = "0.19.0", features = ["extended_categorical", "extended_numeric_types"] }
 futures-core = "0.3"
 pyo3 = { version = "0.29", features = ["abi3-py39"] }
 # The QUIC and WebTransport dependency pins mirror lightstream's, so

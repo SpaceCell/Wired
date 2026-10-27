@@ -353,10 +353,6 @@ impl Serialise<ArrowIpcCodec<Vec64<u8>>> for minarrow::CategoricalArray<u16> {
     }
 }
 
-#[cfg(any(
-    not(feature = "default_categorical_8"),
-    feature = "extended_categorical"
-))]
 impl Serialise<ArrowIpcCodec<Vec64<u8>>> for minarrow::CategoricalArray<u32> {
     type Error = IoError;
 

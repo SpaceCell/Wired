@@ -51,10 +51,6 @@ pub enum ColumnBuilder {
     String32(StringArray<u32>),
     #[cfg(feature = "large_string")]
     String64(StringArray<u64>),
-    #[cfg(any(
-        not(feature = "default_categorical_8"),
-        feature = "extended_categorical"
-    ))]
     Categorical32(CategoricalArray<u32>),
     #[cfg(feature = "default_categorical_8")]
     Categorical8(CategoricalArray<u8>),
@@ -119,10 +115,6 @@ impl ColumnBuilder {
                 nullable,
             )),
             ArrowType::Dictionary(idx_ty) => match idx_ty {
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 CategoricalIndexType::UInt32 => ColumnBuilder::Categorical32(
                     CategoricalArray::<u32>::with_capacity(n_rows, None, nullable),
                 ),
@@ -181,10 +173,6 @@ impl ColumnBuilder {
             ColumnBuilder::String32(a) => a.push_null(),
             #[cfg(feature = "large_string")]
             ColumnBuilder::String64(a) => a.push_null(),
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             ColumnBuilder::Categorical32(a) => a.push_null(),
             #[cfg(feature = "default_categorical_8")]
             ColumnBuilder::Categorical8(a) => a.push_null(),
@@ -221,10 +209,6 @@ impl ColumnBuilder {
             ColumnBuilder::String32(a) => a.len(),
             #[cfg(feature = "large_string")]
             ColumnBuilder::String64(a) => a.len(),
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             ColumnBuilder::Categorical32(a) => a.len(),
             #[cfg(feature = "default_categorical_8")]
             ColumnBuilder::Categorical8(a) => a.len(),
@@ -293,10 +277,6 @@ impl ColumnBuilder {
                 let nc = a.null_count();
                 (Array::TextArray(TextArray::String64(Arc::new(a))), nc)
             }
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             ColumnBuilder::Categorical32(a) => {
                 let nc = a.null_count();
                 (Array::TextArray(TextArray::Categorical32(Arc::new(a))), nc)

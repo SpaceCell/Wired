@@ -356,10 +356,6 @@ fn build_flatbuf_field<'fbb>(
         ArrowType::Dictionary(idx_ty) => {
             // Build index type for dictionary
             let idx_width = match idx_ty {
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 CategoricalIndexType::UInt32 => 32,
                 #[cfg(feature = "default_categorical_8")]
                 CategoricalIndexType::UInt8 => 8,
@@ -884,10 +880,6 @@ fn build_flatbuf_field_file<'fbb>(
         }
         ArrowType::Dictionary(idx_ty) => {
             let idx_width = match idx_ty {
-                #[cfg(any(
-                    not(feature = "default_categorical_8"),
-                    feature = "extended_categorical"
-                ))]
                 CategoricalIndexType::UInt32 => 32,
                 #[cfg(feature = "default_categorical_8")]
                 CategoricalIndexType::UInt8 => 8,

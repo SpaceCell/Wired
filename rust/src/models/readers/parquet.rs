@@ -751,10 +751,6 @@ fn decode_column(
 
 // categorical builders
 
-#[cfg(any(
-    not(feature = "default_categorical_8"),
-    feature = "extended_categorical"
-))]
 fn build_cat32(idx: Vec64<u32>, dict_raw: &[Vec<u8>], mask: Option<Bitmask>) -> Array {
     let dict = dict_raw
         .iter()

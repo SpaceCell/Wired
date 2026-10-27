@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries",
 ]
-dependencies = ["minarrow>=0.18.1"]
+dependencies = ["minarrow>=0.19.0"]
 
 [project.urls]
 Homepage = "https://github.com/SpaceCell/lightstream"

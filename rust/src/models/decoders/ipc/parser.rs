@@ -391,13 +391,6 @@ impl RecordBatchParser {
                         corrections,
                     )?;
 
-                    #[cfg(any(
-                        not(feature = "default_categorical_8"),
-                        feature = "extended_categorical"
-                    ))]
-                    let data_buf: minarrow::Buffer<u32> =
-                        unsafe { Self::buffer_from_slice::<u32>(idx_slice, field_len, &arc_opt) };
-
                     // unique offsets + bytes
                     let (off_start, off_len) = if let Some(c) = corrections {
                         c[buffer_idx]
@@ -422,11 +415,10 @@ impl RecordBatchParser {
 
                     // choose variant by index type
                     match idx_ty {
-                        #[cfg(any(
-                            not(feature = "default_categorical_8"),
-                            feature = "extended_categorical"
-                        ))]
                         CategoricalIndexType::UInt32 => {
+                            let data_buf: minarrow::Buffer<u32> = unsafe {
+                                Self::buffer_from_slice::<u32>(idx_slice, field_len, &arc_opt)
+                            };
                             Array::TextArray(TextArray::Categorical32(Arc::new(
                                 CategoricalArray::<u32>::new(data_buf, unique_values, null_mask),
                             )))
@@ -1548,10 +1540,6 @@ fn make_categorical_array(
 ) -> io::Result<Array> {
     let unique_values = Vec64::from(dict_values.to_vec());
     let array = match idx_ty {
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         CategoricalIndexType::UInt32 => {
             Array::TextArray(TextArray::Categorical32(Arc::new(CategoricalArray::new(
                 minarrow::Buffer::from_shared(idx_data),
@@ -1699,10 +1687,6 @@ fn extract_categorical_index_type(
         io::Error::new(io::ErrorKind::InvalidData, "missing dictionary index type")
     })?;
     match idx_type.bitWidth() {
-        #[cfg(any(
-            not(feature = "default_categorical_8"),
-            feature = "extended_categorical"
-        ))]
         32 => Ok(CategoricalIndexType::UInt32),
         #[cfg(feature = "default_categorical_8")]
         8 => Ok(CategoricalIndexType::UInt8),
@@ -1964,10 +1948,6 @@ pub fn convert_fb_field_to_arrow(
             .indexType()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing dict idx"))?;
         let idx_ty = match idx.bitWidth() {
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             32 => Idx::UInt32,
             #[cfg(feature = "default_categorical_8")]
             8 => Idx::UInt8,

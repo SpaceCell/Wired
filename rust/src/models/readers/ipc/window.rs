@@ -143,10 +143,6 @@ fn window_array(array: &Array, offset: usize, len: usize) -> io::Result<Array> {
             TextArray::String64(arr) => {
                 TextArray::String64(Arc::new(window_string(arr, offset, len)))
             }
-            #[cfg(any(
-                not(feature = "default_categorical_8"),
-                feature = "extended_categorical"
-            ))]
             TextArray::Categorical32(arr) => {
                 TextArray::Categorical32(Arc::new(window_categorical(arr, offset, len)))
             }
