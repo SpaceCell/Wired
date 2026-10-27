@@ -41,7 +41,7 @@ flatbuffers = "25.12.19"
 libc = { version = "0.2.183", optional = true }
 futures-sink = "0.3.32"
 log = "0.4"
-minarrow = { version = "0.18.3", features = ["chunked", "views", "select", "size"], default-features = false }
+minarrow = { version = "0.19.0", features = ["chunked", "views", "select", "size"], default-features = false }
 vec64 = { version = "0.5.4" }
 snap = { version = "1.0", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true }
