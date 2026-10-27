@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "lightstream-io"
-version = "0.7.1"
+version = "0.8.0"
 description = "Streaming Arrow I/O for Python - files, sockets, and network transports with zero-copy minarrow interop."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -2,6 +2,20 @@
 
 Notable changes are recorded from 0.5.0 onward.
 
+## v0.8.0 27 Oct 2026
+
+### Enhancements
+- Added object storage behind the `aws`, `gcp` and `azure` features. File readers and writers, and the Python `read` and `write` functions, accept object storage URLs in place of paths.
+- Supporting the object storage, Lightstream now supports partitioning for its chunked writers, and nested partition directories in the chunked readers.
+- Lightstream now includes support for WebAssembly targets.
+
+### Breaking
+- Chunked writer constructors now require specifying a `partition` argument as `Option<PartitionType>`.
+- The `default_categorical_8` feature flag now pulls in the `Categorical32` enum arm, as per minarrow 0.19.0.
+
+### Maintenance
+- Minarrow has been upgraded to 0.19.0. lightstream-py pins minarrow and minarrow-pyo3 at 0.19.0.
+
 ## v0.7.1 1 Oct 2026
 
 ### Maintenance
