@@ -971,7 +971,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "lightstream"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "fast-float2",
@@ -1003,7 +1003,7 @@ dependencies = [
 
 [[package]]
 name = "lightstream-py"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "futures-core",
  "lightstream",

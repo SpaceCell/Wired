@@ -2,7 +2,7 @@ cargo-features = ["trim-paths"]
 
 [package]
 name = "lightstream-py"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 authors = ["Peter G. Bower"]
 license = "MPL-2.0"
@@ -19,7 +19,7 @@ name = "lightstream_py"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-lightstream = { version = "0.7", path = "../rust", features = ["csv", "datetime", "decimal", "extended_categorical", "extended_numeric_types", "json", "http", "parquet", "protocol", "quic", "snappy", "stdio", "tcp", "tls", "webtransport", "websocket", "zstd"] }
+lightstream = { version = "0.8", path = "../rust", features = ["csv", "datetime", "decimal", "extended_categorical", "extended_numeric_types", "json", "http", "parquet", "protocol", "quic", "snappy", "stdio", "tcp", "tls", "webtransport", "websocket", "zstd"] }
 # The categorical and numeric feature set mirrors the minarrow-py build.
 # minarrow-pyo3's dictionary-index conversion needs the extended features,
 # and they flow through lightstream's flags so its match arms gate in step
@@ -40,7 +40,7 @@ wtransport = "0.7"
 
 # Unix-only transports stay out of Windows wheels.
 [target.'cfg(unix)'.dependencies]
-lightstream = { version = "0.7", path = "../rust", features = ["mmap", "uds"] }
+lightstream = { version = "0.8", path = "../rust", features = ["mmap", "uds"] }
 
 [features]
 default = []
