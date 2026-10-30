@@ -24,6 +24,8 @@ mod parquet_nullable_roundtrip_tests {
     use lightstream::models::readers::parquet::load_parquet_table;
     use lightstream::models::writers::parquet::{PARQUET_PAGE_CHUNK_SIZE, write_parquet_table};
     use minarrow::ffi::arrow_dtype::CategoricalIndexType;
+    #[cfg(feature = "datetime")]
+    use minarrow::Dt;
     use minarrow::{
         Array, ArrowType, Bitmask, BooleanArray, CategoricalArray, Field, FieldArray, FloatArray,
         IntegerArray, MaskedArray, NumericArray, StringArray, Table, TextArray, Vec64,
@@ -122,27 +124,27 @@ mod parquet_nullable_roundtrip_tests {
     }
 
     #[cfg(feature = "datetime")]
-    fn temporal32(name: &str, dtype: ArrowType, unit: TimeUnit, value: fn(usize) -> i32) -> FieldArray {
+    fn temporal32(name: &str, dt: Dt, value: fn(usize) -> i32) -> FieldArray {
         column(
             name,
-            dtype,
+            ArrowType::DateTime(dt.clone()),
             Array::from_datetime_i32(DatetimeArray::from_vec64(
                 (0..N_ROWS).map(value).collect::<Vec64<_>>(),
                 Some(null_mask()),
-                Some(unit),
+                dt,
             )),
         )
     }
 
     #[cfg(feature = "datetime")]
-    fn temporal64(name: &str, dtype: ArrowType, unit: TimeUnit, value: fn(usize) -> i64) -> FieldArray {
+    fn temporal64(name: &str, dt: Dt, value: fn(usize) -> i64) -> FieldArray {
         column(
             name,
-            dtype,
+            ArrowType::DateTime(dt.clone()),
             Array::from_datetime_i64(DatetimeArray::from_vec64(
                 (0..N_ROWS).map(value).collect::<Vec64<_>>(),
                 Some(null_mask()),
-                Some(unit),
+                dt,
             )),
         )
     }
@@ -240,60 +242,51 @@ mod parquet_nullable_roundtrip_tests {
 
         #[cfg(feature = "datetime")]
         {
-            cols.push(temporal32("date32", ArrowType::Date32, TimeUnit::Days, date32_value));
-            cols.push(temporal64("date64", ArrowType::Date64, TimeUnit::Milliseconds, date64_value));
+            cols.push(temporal32("date32", Dt::Date32, date32_value));
+            cols.push(temporal64("date64", Dt::Date64, date64_value));
             cols.push(temporal64(
                 "ts_s",
-                ArrowType::Timestamp(TimeUnit::Seconds, None),
-                TimeUnit::Seconds,
+                Dt::Timestamp(TimeUnit::Seconds, None),
                 timestamp_value,
             ));
             cols.push(temporal64(
                 "ts_ms",
-                ArrowType::Timestamp(TimeUnit::Milliseconds, None),
-                TimeUnit::Milliseconds,
+                Dt::Timestamp(TimeUnit::Milliseconds, None),
                 timestamp_value,
             ));
             cols.push(temporal64(
                 "ts_us",
-                ArrowType::Timestamp(TimeUnit::Microseconds, None),
-                TimeUnit::Microseconds,
+                Dt::Timestamp(TimeUnit::Microseconds, None),
                 timestamp_value,
             ));
             cols.push(temporal64(
                 "ts_ns",
-                ArrowType::Timestamp(TimeUnit::Nanoseconds, None),
-                TimeUnit::Nanoseconds,
+                Dt::Timestamp(TimeUnit::Nanoseconds, None),
                 timestamp_value,
             ));
             cols.push(temporal64(
                 "ts_us_utc",
-                ArrowType::Timestamp(TimeUnit::Microseconds, Some("UTC".to_string())),
-                TimeUnit::Microseconds,
+                Dt::Timestamp(TimeUnit::Microseconds, Some("UTC".to_string())),
                 timestamp_value,
             ));
             cols.push(temporal32(
                 "time32_ms",
-                ArrowType::Time32(TimeUnit::Milliseconds),
-                TimeUnit::Milliseconds,
+                Dt::Time32(TimeUnit::Milliseconds),
                 |i| time_value(i) as i32,
             ));
             cols.push(temporal32(
                 "time32_us",
-                ArrowType::Time32(TimeUnit::Microseconds),
-                TimeUnit::Microseconds,
+                Dt::Time32(TimeUnit::Microseconds),
                 |i| time_value(i) as i32,
             ));
             cols.push(temporal64(
                 "time64_ms",
-                ArrowType::Time64(TimeUnit::Milliseconds),
-                TimeUnit::Milliseconds,
+                Dt::Time64(TimeUnit::Milliseconds),
                 time_value,
             ));
             cols.push(temporal64(
                 "time64_ns",
-                ArrowType::Time64(TimeUnit::Nanoseconds),
-                TimeUnit::Nanoseconds,
+                Dt::Time64(TimeUnit::Nanoseconds),
                 time_value,
             ));
         }
@@ -355,7 +348,8 @@ mod parquet_nullable_roundtrip_tests {
         assert_eq!(col(out, name).field.dtype, dtype, "{name} dtype");
         match &col(out, name).array {
             Array::TemporalArray(TemporalArray::Datetime32(a)) => {
-                assert_eq!(a.time_unit, unit, "{name} unit");
+                assert_eq!(a.time_unit(), unit, "{name} unit");
+                assert_eq!(ArrowType::DateTime(a.dtype.clone()), dtype, "{name} array dtype");
                 assert_eq!((0..N_ROWS).map(|i| a.get(i)).collect::<Vec<_>>(), expected(value), "{name}");
             }
             other => panic!("{name}: {other:?}"),
@@ -367,7 +361,8 @@ mod parquet_nullable_roundtrip_tests {
         assert_eq!(col(out, name).field.dtype, dtype, "{name} dtype");
         match &col(out, name).array {
             Array::TemporalArray(TemporalArray::Datetime64(a)) => {
-                assert_eq!(a.time_unit, unit, "{name} unit");
+                assert_eq!(a.time_unit(), unit, "{name} unit");
+                assert_eq!(ArrowType::DateTime(a.dtype.clone()), dtype, "{name} array dtype");
                 assert_eq!((0..N_ROWS).map(|i| a.get(i)).collect::<Vec<_>>(), expected(value), "{name}");
             }
             other => panic!("{name}: {other:?}"),
@@ -447,37 +442,37 @@ mod parquet_nullable_roundtrip_tests {
 
         #[cfg(feature = "datetime")]
         {
-            assert_temporal32(out, "date32", ArrowType::Date32, TimeUnit::Days, date32_value);
+            assert_temporal32(out, "date32", ArrowType::DateTime(Dt::Date32), TimeUnit::Days, date32_value);
             // DATE stores days, so Date64 milliseconds come back as Date32.
-            assert_temporal32(out, "date64", ArrowType::Date32, TimeUnit::Days, |i| {
+            assert_temporal32(out, "date64", ArrowType::DateTime(Dt::Date32), TimeUnit::Days, |i| {
                 (date64_value(i) / 86_400_000) as i32
             });
             // Parquet has no seconds unit, so seconds come back as milliseconds.
             assert_temporal64(
                 out,
                 "ts_s",
-                ArrowType::Timestamp(TimeUnit::Milliseconds, None),
+                ArrowType::DateTime(Dt::Timestamp(TimeUnit::Milliseconds, None)),
                 TimeUnit::Milliseconds,
                 |i| timestamp_value(i) * 1000,
             );
             assert_temporal64(
                 out,
                 "ts_ms",
-                ArrowType::Timestamp(TimeUnit::Milliseconds, None),
+                ArrowType::DateTime(Dt::Timestamp(TimeUnit::Milliseconds, None)),
                 TimeUnit::Milliseconds,
                 timestamp_value,
             );
             assert_temporal64(
                 out,
                 "ts_us",
-                ArrowType::Timestamp(TimeUnit::Microseconds, None),
+                ArrowType::DateTime(Dt::Timestamp(TimeUnit::Microseconds, None)),
                 TimeUnit::Microseconds,
                 timestamp_value,
             );
             assert_temporal64(
                 out,
                 "ts_ns",
-                ArrowType::Timestamp(TimeUnit::Nanoseconds, None),
+                ArrowType::DateTime(Dt::Timestamp(TimeUnit::Nanoseconds, None)),
                 TimeUnit::Nanoseconds,
                 timestamp_value,
             );
@@ -486,14 +481,14 @@ mod parquet_nullable_roundtrip_tests {
             assert_temporal64(
                 out,
                 "ts_us_utc",
-                ArrowType::Timestamp(TimeUnit::Microseconds, Some("UTC".to_string())),
+                ArrowType::DateTime(Dt::Timestamp(TimeUnit::Microseconds, Some("UTC".to_string()))),
                 TimeUnit::Microseconds,
                 timestamp_value,
             );
             assert_temporal32(
                 out,
                 "time32_ms",
-                ArrowType::Time32(TimeUnit::Milliseconds),
+                ArrowType::DateTime(Dt::Time32(TimeUnit::Milliseconds)),
                 TimeUnit::Milliseconds,
                 |i| time_value(i) as i32,
             );
@@ -501,7 +496,7 @@ mod parquet_nullable_roundtrip_tests {
             assert_temporal64(
                 out,
                 "time32_us",
-                ArrowType::Time64(TimeUnit::Microseconds),
+                ArrowType::DateTime(Dt::Time64(TimeUnit::Microseconds)),
                 TimeUnit::Microseconds,
                 time_value,
             );
@@ -509,14 +504,14 @@ mod parquet_nullable_roundtrip_tests {
             assert_temporal32(
                 out,
                 "time64_ms",
-                ArrowType::Time32(TimeUnit::Milliseconds),
+                ArrowType::DateTime(Dt::Time32(TimeUnit::Milliseconds)),
                 TimeUnit::Milliseconds,
                 |i| time_value(i) as i32,
             );
             assert_temporal64(
                 out,
                 "time64_ns",
-                ArrowType::Time64(TimeUnit::Nanoseconds),
+                ArrowType::DateTime(Dt::Time64(TimeUnit::Nanoseconds)),
                 TimeUnit::Nanoseconds,
                 time_value,
             );

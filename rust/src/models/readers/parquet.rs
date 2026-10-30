@@ -64,7 +64,7 @@ use minarrow::{
 #[cfg(feature = "decimal")]
 use minarrow::DecimalArray;
 #[cfg(feature = "datetime")]
-use minarrow::{DatetimeArray, TemporalArray, TimeUnit};
+use minarrow::{DatetimeArray, Dt, TemporalArray};
 
 /// Build the logical type for a schema element.
 ///
@@ -670,27 +670,19 @@ fn decode_column(
 
         // temporal. DATE and TIME(MILLIS) are INT32, every other unit INT64.
         #[cfg(feature = "datetime")]
-        ArrowType::Date32 => Array::TemporalArray(TemporalArray::Datetime32(Arc::new(
-            DatetimeArray {
+        ArrowType::DateTime(dt @ (Dt::Date32 | Dt::Time32(_))) => Array::TemporalArray(
+            TemporalArray::Datetime32(Arc::new(DatetimeArray {
                 data: decode_datetime32_plain(buf)?.into(),
                 null_mask: mask,
-                time_unit: TimeUnit::Days,
-            },
-        ))),
+                dtype: dt.clone(),
+            })),
+        ),
         #[cfg(feature = "datetime")]
-        ArrowType::Time32(unit) => Array::TemporalArray(TemporalArray::Datetime32(Arc::new(
-            DatetimeArray {
-                data: decode_datetime32_plain(buf)?.into(),
-                null_mask: mask,
-                time_unit: unit.clone(),
-            },
-        ))),
-        #[cfg(feature = "datetime")]
-        ArrowType::Timestamp(unit, _) | ArrowType::Time64(unit) => {
+        ArrowType::DateTime(dt @ (Dt::Timestamp(_, _) | Dt::Time64(_))) => {
             Array::TemporalArray(TemporalArray::Datetime64(Arc::new(DatetimeArray {
                 data: decode_datetime64_plain(buf)?.into(),
                 null_mask: mask,
-                time_unit: unit.clone(),
+                dtype: dt.clone(),
             })))
         }
 

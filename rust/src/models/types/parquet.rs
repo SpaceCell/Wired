@@ -14,6 +14,8 @@ use crate::error::IoError;
 #[cfg(feature = "datetime")]
 use minarrow::TimeUnit;
 use minarrow::ArrowType;
+#[cfg(feature = "datetime")]
+use minarrow::Dt;
 
 /// Parquet physical types as defined in `parquet.thrift`.
 ///
@@ -325,16 +327,16 @@ pub(crate) fn arrow_type_to_parquet(
         ArrowType::LargeString => Ok((ParquetPhysicalType::ByteArray, ParquetLogicalType::Utf8)),
         ArrowType::Utf8View => Ok((ParquetPhysicalType::ByteArray, ParquetLogicalType::Utf8)),
         #[cfg(feature = "datetime")]
-        ArrowType::Date32 => Ok((ParquetPhysicalType::Int32, ParquetLogicalType::Date32)),
+        ArrowType::DateTime(Dt::Date32) => Ok((ParquetPhysicalType::Int32, ParquetLogicalType::Date32)),
         // Parquet DATE is a 32-bit day count, so Date64 milliseconds are
         // carried into days on write. See `temporal_unit_scale`.
         #[cfg(feature = "datetime")]
-        ArrowType::Date64 => Ok((ParquetPhysicalType::Int32, ParquetLogicalType::Date32)),
+        ArrowType::DateTime(Dt::Date64) => Ok((ParquetPhysicalType::Int32, ParquetLogicalType::Date32)),
         // A timestamp with a timezone is an instant, so it is stored as
         // adjusted to UTC. A timestamp without one is local wall-clock time.
         // Parquet keeps only that flag, not the zone name.
         #[cfg(feature = "datetime")]
-        ArrowType::Timestamp(unit, tz) => match unit {
+        ArrowType::DateTime(Dt::Timestamp(unit, tz)) => match unit {
             // Parquet has no seconds unit, so seconds are scaled to
             // milliseconds on write.
             TimeUnit::Seconds | TimeUnit::Milliseconds => Ok((
@@ -356,7 +358,7 @@ pub(crate) fn arrow_type_to_parquet(
         // TIME(MICROS) and TIME(NANOS) are INT64, whatever width the Arrow
         // column uses. Seconds are scaled to milliseconds on write.
         #[cfg(feature = "datetime")]
-        ArrowType::Time32(unit) | ArrowType::Time64(unit) => match unit {
+        ArrowType::DateTime(Dt::Time32(unit) | Dt::Time64(unit)) => match unit {
             TimeUnit::Seconds | TimeUnit::Milliseconds => {
                 Ok((ParquetPhysicalType::Int32, ParquetLogicalType::TimeMillis))
             }
@@ -374,11 +376,11 @@ pub(crate) fn arrow_type_to_parquet(
             "Null type is not supported".into(),
         )),
         #[cfg(feature = "datetime")]
-        ArrowType::Duration32(_) | ArrowType::Duration64(_) => Err(IoError::UnsupportedType(
+        ArrowType::DateTime(Dt::Duration32(_) | Dt::Duration64(_)) => Err(IoError::UnsupportedType(
             "Duration has no Parquet logical type".into(),
         )),
         #[cfg(feature = "datetime")]
-        ArrowType::Interval(_) => Err(IoError::UnsupportedType(
+        ArrowType::DateTime(Dt::Interval(_)) => Err(IoError::UnsupportedType(
             "Interval is not supported".into(),
         )),
     }
@@ -393,11 +395,11 @@ pub(crate) fn arrow_type_to_parquet(
 pub(crate) fn temporal_unit_scale(ty: &ArrowType) -> (i64, i64) {
     match ty {
         #[cfg(feature = "datetime")]
-        ArrowType::Date64 => (1, 86_400_000),
+        ArrowType::DateTime(Dt::Date64) => (1, 86_400_000),
         #[cfg(feature = "datetime")]
-        ArrowType::Timestamp(TimeUnit::Seconds, _)
-        | ArrowType::Time32(TimeUnit::Seconds)
-        | ArrowType::Time64(TimeUnit::Seconds) => (1000, 1),
+        ArrowType::DateTime(Dt::Timestamp(TimeUnit::Seconds, _))
+        | ArrowType::DateTime(Dt::Time32(TimeUnit::Seconds))
+        | ArrowType::DateTime(Dt::Time64(TimeUnit::Seconds)) => (1000, 1),
         _ => (1, 1),
     }
 }
@@ -479,44 +481,44 @@ pub(crate) fn parquet_to_arrow_type(
 
         // Dates, times, timestamps
         #[cfg(feature = "datetime")]
-        (ParquetPhysicalType::Int32, Some(ParquetLogicalType::Date32)) => Ok(ArrowType::Date32),
+        (ParquetPhysicalType::Int32, Some(ParquetLogicalType::Date32)) => Ok(ArrowType::DateTime(Dt::Date32)),
         // A UTC-adjusted timestamp reads back with the "UTC" zone. Parquet
         // records no zone name, so that is the only zone a file can carry.
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int64, Some(ParquetLogicalType::TimestampMillis { utc })) => Ok(
-            ArrowType::Timestamp(TimeUnit::Milliseconds, utc.then(|| "UTC".to_string())),
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Milliseconds, utc.then(|| "UTC".to_string()))),
         ),
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int64, Some(ParquetLogicalType::TimestampMicros { utc })) => Ok(
-            ArrowType::Timestamp(TimeUnit::Microseconds, utc.then(|| "UTC".to_string())),
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Microseconds, utc.then(|| "UTC".to_string()))),
         ),
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int64, Some(ParquetLogicalType::TimestampNanos { utc })) => Ok(
-            ArrowType::Timestamp(TimeUnit::Nanoseconds, utc.then(|| "UTC".to_string())),
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Nanoseconds, utc.then(|| "UTC".to_string()))),
         ),
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int32, Some(ParquetLogicalType::TimeMillis)) => {
-            Ok(ArrowType::Time32(TimeUnit::Milliseconds))
+            Ok(ArrowType::DateTime(Dt::Time32(TimeUnit::Milliseconds)))
         }
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int32, Some(ParquetLogicalType::TimeMicros)) => {
-            Ok(ArrowType::Time32(TimeUnit::Microseconds))
+            Ok(ArrowType::DateTime(Dt::Time32(TimeUnit::Microseconds)))
         }
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int32, Some(ParquetLogicalType::TimeNanos)) => {
-            Ok(ArrowType::Time32(TimeUnit::Nanoseconds))
+            Ok(ArrowType::DateTime(Dt::Time32(TimeUnit::Nanoseconds)))
         }
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int64, Some(ParquetLogicalType::TimeMillis)) => {
-            Ok(ArrowType::Time64(TimeUnit::Milliseconds))
+            Ok(ArrowType::DateTime(Dt::Time64(TimeUnit::Milliseconds)))
         }
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int64, Some(ParquetLogicalType::TimeMicros)) => {
-            Ok(ArrowType::Time64(TimeUnit::Microseconds))
+            Ok(ArrowType::DateTime(Dt::Time64(TimeUnit::Microseconds)))
         }
         #[cfg(feature = "datetime")]
         (ParquetPhysicalType::Int64, Some(ParquetLogicalType::TimeNanos)) => {
-            Ok(ArrowType::Time64(TimeUnit::Nanoseconds))
+            Ok(ArrowType::DateTime(Dt::Time64(TimeUnit::Nanoseconds)))
         }
 
         // Decimals

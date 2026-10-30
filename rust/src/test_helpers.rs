@@ -27,7 +27,7 @@ use minarrow::{
 use tempfile::NamedTempFile;
 
 #[cfg(feature = "datetime")]
-use minarrow::{DatetimeArray, TemporalArray, TimeUnit};
+use minarrow::{DatetimeArray, Dt, TemporalArray};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
@@ -219,25 +219,25 @@ pub(crate) fn dt32_col() -> FieldArray {
     FieldArray::new(
         Field {
             name: "dt32".into(),
-            dtype: ArrowType::Date32,
+            dtype: ArrowType::DateTime(Dt::Date32),
             nullable: false,
             metadata: Default::default(),
         },
         Array::TemporalArray(TemporalArray::Datetime32(Arc::new(DatetimeArray {
             data: Buffer::from(Vec64::from_slice(&[111, 222, 333, 444])),
             null_mask: None,
-            time_unit: TimeUnit::Days,
+            dtype: Dt::Date32,
         }))),
     )
 }
 
 #[cfg(feature = "datetime")]
-/// Build a non-nullable `Date64` column - unit is days
+/// Build a non-nullable `Date64` column - unit is milliseconds
 pub(crate) fn dt64_col() -> FieldArray {
     FieldArray::new(
         Field {
             name: "dt64".into(),
-            dtype: ArrowType::Date64,
+            dtype: ArrowType::DateTime(Dt::Date64),
             nullable: false,
             metadata: Default::default(),
         },
@@ -246,7 +246,7 @@ pub(crate) fn dt64_col() -> FieldArray {
                 1_111_111, 2_222_222, 3_333_333, 4_444_444,
             ])),
             null_mask: None,
-            time_unit: TimeUnit::Days,
+            dtype: Dt::Date64,
         }))),
     )
 }

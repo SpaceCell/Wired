@@ -73,16 +73,18 @@ pub enum ValueSource {
 /// nanoseconds.
 #[cfg(feature = "datetime")]
 fn clock_nanos_per_tick(field: &Field) -> i64 {
-    use minarrow::ArrowType;
     use minarrow::enums::time_units::TimeUnit;
+    use minarrow::{ArrowType, Dt};
     let unit = match &field.dtype {
-        ArrowType::Timestamp(unit, _)
-        | ArrowType::Time32(unit)
-        | ArrowType::Time64(unit)
-        | ArrowType::Duration32(unit)
-        | ArrowType::Duration64(unit) => *unit,
-        ArrowType::Date64 => TimeUnit::Milliseconds,
-        ArrowType::Date32 => TimeUnit::Days,
+        ArrowType::DateTime(
+            Dt::Timestamp(unit, _)
+            | Dt::Time32(unit)
+            | Dt::Time64(unit)
+            | Dt::Duration32(unit)
+            | Dt::Duration64(unit),
+        ) => *unit,
+        ArrowType::DateTime(Dt::Date64) => TimeUnit::Milliseconds,
+        ArrowType::DateTime(Dt::Date32) => TimeUnit::Days,
         _ => return 1,
     };
     match unit {

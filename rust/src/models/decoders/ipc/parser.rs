@@ -348,7 +348,7 @@ impl RecordBatchParser {
                     ))))
                 }
                 #[cfg(feature = "datetime")]
-                ArrowType::Date32 | ArrowType::Time32(_) => {
+                ArrowType::DateTime(dt @ (Dt::Date32 | Dt::Time32(_))) => {
                     let (slice, _) = Self::extract_buffer_slice(
                         &fbuf_meta,
                         &mut buffer_idx,
@@ -358,15 +358,16 @@ impl RecordBatchParser {
                     )?;
                     let data =
                         unsafe { Self::buffer_from_slice::<i32>(slice, field_len, &arc_opt) };
-                    Array::NumericArray(NumericArray::Int32(Arc::new(IntegerArray::new(
-                        data, null_mask,
+                    Array::TemporalArray(TemporalArray::Datetime32(Arc::new(DatetimeArray::new(
+                        data,
+                        null_mask,
+                        dt.clone(),
                     ))))
                 }
                 #[cfg(feature = "datetime")]
-                ArrowType::Date64
-                | ArrowType::Timestamp(_, _)
-                | ArrowType::Time64(_)
-                | ArrowType::Duration64(_) => {
+                ArrowType::DateTime(
+                    dt @ (Dt::Date64 | Dt::Timestamp(_, _) | Dt::Time64(_) | Dt::Duration64(_)),
+                ) => {
                     let (slice, _) = Self::extract_buffer_slice(
                         &fbuf_meta,
                         &mut buffer_idx,
@@ -376,8 +377,10 @@ impl RecordBatchParser {
                     )?;
                     let data =
                         unsafe { Self::buffer_from_slice::<i64>(slice, field_len, &arc_opt) };
-                    Array::NumericArray(NumericArray::Int64(Arc::new(IntegerArray::new(
-                        data, null_mask,
+                    Array::TemporalArray(TemporalArray::Datetime64(Arc::new(DatetimeArray::new(
+                        data,
+                        null_mask,
+                        dt.clone(),
                     ))))
                 }
                 // dictionary
@@ -1128,12 +1131,14 @@ pub fn decode_record_batch(
             }
 
             #[cfg(feature = "datetime")]
-            ArrowType::Date32
-            | ArrowType::Date64
-            | ArrowType::Timestamp(_, _)
-            | ArrowType::Time32(_)
-            | ArrowType::Time64(_)
-            | ArrowType::Duration64(_) => {
+            ArrowType::DateTime(
+                Dt::Date32
+                | Dt::Date64
+                | Dt::Timestamp(_, _)
+                | Dt::Time32(_)
+                | Dt::Time64(_)
+                | Dt::Duration64(_),
+            ) => {
                 let (off, len) = consume_buffer(
                     &buffers,
                     &mut buffer_idx,
@@ -1500,27 +1505,21 @@ fn make_numeric_array(
             null_mask,
         }))),
         #[cfg(feature = "datetime")]
-        ArrowType::Date32 => Array::NumericArray(NumericArray::Int32(Arc::new(IntegerArray {
-            data: minarrow::Buffer::from_shared(data),
-            null_mask,
-        }))),
-        #[cfg(feature = "datetime")]
-        ArrowType::Date64 => Array::NumericArray(NumericArray::Int64(Arc::new(IntegerArray {
-            data: minarrow::Buffer::from_shared(data),
-            null_mask,
-        }))),
-        #[cfg(feature = "datetime")]
-        ArrowType::Time32(_) => Array::NumericArray(NumericArray::Int32(Arc::new(IntegerArray {
-            data: minarrow::Buffer::from_shared(data),
-            null_mask,
-        }))),
-        #[cfg(feature = "datetime")]
-        ArrowType::Timestamp(_, _) | ArrowType::Time64(_) | ArrowType::Duration64(_) => {
-            Array::NumericArray(NumericArray::Int64(Arc::new(IntegerArray {
-                data: minarrow::Buffer::from_shared(data),
+        ArrowType::DateTime(dt @ (Dt::Date32 | Dt::Time32(_))) => {
+            Array::TemporalArray(TemporalArray::Datetime32(Arc::new(DatetimeArray::new(
+                minarrow::Buffer::from_shared(data),
                 null_mask,
-            })))
+                dt.clone(),
+            ))))
         }
+        #[cfg(feature = "datetime")]
+        ArrowType::DateTime(
+            dt @ (Dt::Date64 | Dt::Timestamp(_, _) | Dt::Time64(_) | Dt::Duration64(_)),
+        ) => Array::TemporalArray(TemporalArray::Datetime64(Arc::new(DatetimeArray::new(
+            minarrow::Buffer::from_shared(data),
+            null_mask,
+            dt.clone(),
+        )))),
         other => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -1705,8 +1704,8 @@ fn extract_categorical_index_type(
 #[cfg(feature = "datetime")]
 fn convert_date_unit_fb(unit: fb::DateUnit) -> io::Result<ArrowType> {
     match unit {
-        fb::DateUnit::DAY => Ok(ArrowType::Date32),
-        fb::DateUnit::MILLISECOND => Ok(ArrowType::Date64),
+        fb::DateUnit::DAY => Ok(ArrowType::DateTime(Dt::Date32)),
+        fb::DateUnit::MILLISECOND => Ok(ArrowType::DateTime(Dt::Date64)),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported Date unit {:?}", unit),
@@ -1754,8 +1753,8 @@ fn convert_date_unit_fbf(
 ) -> io::Result<ArrowType> {
     use crate::arrow::file::org::apache::arrow::flatbuf::DateUnit;
     match unit {
-        DateUnit::DAY => Ok(ArrowType::Date32),
-        DateUnit::MILLISECOND => Ok(ArrowType::Date64),
+        DateUnit::DAY => Ok(ArrowType::DateTime(Dt::Date32)),
+        DateUnit::MILLISECOND => Ok(ArrowType::DateTime(Dt::Date64)),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported Date unit {:?}", unit),
@@ -1819,10 +1818,10 @@ fn extract_base_type(fb_field: &fb::Field) -> io::Result<ArrowType> {
             let t = fb_field.type__as_timestamp().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "missing Timestamp type")
             })?;
-            Ok(ArrowType::Timestamp(
+            Ok(ArrowType::DateTime(Dt::Timestamp(
                 convert_time_unit_fb(t.unit())?,
                 t.timezone().map(|s| s.to_string()),
-            ))
+            )))
         }
         #[cfg(feature = "datetime")]
         fb::Type::Time => {
@@ -1831,8 +1830,8 @@ fn extract_base_type(fb_field: &fb::Field) -> io::Result<ArrowType> {
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Time type"))?;
             let unit = convert_time_unit_fb(t.unit())?;
             match t.bitWidth() {
-                32 => Ok(ArrowType::Time32(unit)),
-                64 => Ok(ArrowType::Time64(unit)),
+                32 => Ok(ArrowType::DateTime(Dt::Time32(unit))),
+                64 => Ok(ArrowType::DateTime(Dt::Time64(unit))),
                 w => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("unsupported Time bit width {w}"),
@@ -1844,7 +1843,7 @@ fn extract_base_type(fb_field: &fb::Field) -> io::Result<ArrowType> {
             let d = fb_field.type__as_duration().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "missing Duration type")
             })?;
-            Ok(ArrowType::Duration64(convert_time_unit_fb(d.unit())?))
+            Ok(ArrowType::DateTime(Dt::Duration64(convert_time_unit_fb(d.unit())?)))
         }
         fb::Type::Bool => Ok(ArrowType::Boolean),
         #[cfg(feature = "decimal")]
@@ -2032,10 +2031,10 @@ pub fn convert_fb_field_to_arrow(
                 let t = fbf_field.type__as_timestamp().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "missing Timestamp type")
                 })?;
-                ArrowType::Timestamp(
+                ArrowType::DateTime(Dt::Timestamp(
                     convert_time_unit_fbf(t.unit())?,
                     t.timezone().map(|s| s.to_string()),
-                )
+                ))
             }
             #[cfg(feature = "datetime")]
             fbf::Type::Time => {
@@ -2044,8 +2043,8 @@ pub fn convert_fb_field_to_arrow(
                 })?;
                 let unit = convert_time_unit_fbf(t.unit())?;
                 match t.bitWidth() {
-                    32 => ArrowType::Time32(unit),
-                    64 => ArrowType::Time64(unit),
+                    32 => ArrowType::DateTime(Dt::Time32(unit)),
+                    64 => ArrowType::DateTime(Dt::Time64(unit)),
                     w => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -2059,7 +2058,7 @@ pub fn convert_fb_field_to_arrow(
                 let d = fbf_field.type__as_duration().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "missing Duration type")
                 })?;
-                ArrowType::Duration64(convert_time_unit_fbf(d.unit())?)
+                ArrowType::DateTime(Dt::Duration64(convert_time_unit_fbf(d.unit())?))
             }
             #[cfg(feature = "decimal")]
             fbf::Type::Decimal => {

@@ -19,6 +19,8 @@ use std::io::{self};
 use minarrow::ffi::arrow_dtype::CategoricalIndexType;
 #[cfg(feature = "datetime")]
 use minarrow::enums::time_units::TimeUnit;
+#[cfg(feature = "datetime")]
+use minarrow::ffi::arrow_dtype::Dt;
 use minarrow::{ArrowType, Field};
 
 use crate::arrow::file::org::apache::arrow::flatbuf as fbf;
@@ -244,7 +246,7 @@ fn build_flatbuf_field<'fbb>(
             (fbm::Type::LargeUtf8, Some(s.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Date32 => {
+        ArrowType::DateTime(Dt::Date32) => {
             let date = fbm::Date::create(
                 fbb,
                 &fbm::DateArgs {
@@ -254,7 +256,7 @@ fn build_flatbuf_field<'fbb>(
             (fbm::Type::Date, Some(date.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Date64 => {
+        ArrowType::DateTime(Dt::Date64) => {
             let date = fbm::Date::create(
                 fbb,
                 &fbm::DateArgs {
@@ -264,7 +266,7 @@ fn build_flatbuf_field<'fbb>(
             (fbm::Type::Date, Some(date.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Timestamp(unit, tz) => {
+        ArrowType::DateTime(Dt::Timestamp(unit, tz)) => {
             let unit = match unit {
                 TimeUnit::Seconds => fbm::TimeUnit::SECOND,
                 TimeUnit::Milliseconds => fbm::TimeUnit::MILLISECOND,
@@ -282,9 +284,9 @@ fn build_flatbuf_field<'fbb>(
             (fbm::Type::Timestamp, Some(ts.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Time32(unit) | ArrowType::Time64(unit) => {
+        ArrowType::DateTime(Dt::Time32(unit) | Dt::Time64(unit)) => {
             let bit_width: i32 =
-                if matches!(&field.dtype, ArrowType::Time32(_)) { 32 } else { 64 };
+                if matches!(&field.dtype, ArrowType::DateTime(Dt::Time32(_))) { 32 } else { 64 };
             let unit = match unit {
                 TimeUnit::Seconds => fbm::TimeUnit::SECOND,
                 TimeUnit::Milliseconds => fbm::TimeUnit::MILLISECOND,
@@ -301,7 +303,7 @@ fn build_flatbuf_field<'fbb>(
             (fbm::Type::Time, Some(time.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Duration64(unit) => {
+        ArrowType::DateTime(Dt::Duration64(unit)) => {
             let unit = match unit {
                 TimeUnit::Seconds => fbm::TimeUnit::SECOND,
                 TimeUnit::Milliseconds => fbm::TimeUnit::MILLISECOND,
@@ -769,7 +771,7 @@ fn build_flatbuf_field_file<'fbb>(
             (fbf::Type::LargeUtf8, Some(s.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Date32 => {
+        ArrowType::DateTime(Dt::Date32) => {
             let date = fbf::Date::create(
                 fbb,
                 &fbf::DateArgs {
@@ -779,7 +781,7 @@ fn build_flatbuf_field_file<'fbb>(
             (fbf::Type::Date, Some(date.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Date64 => {
+        ArrowType::DateTime(Dt::Date64) => {
             let date = fbf::Date::create(
                 fbb,
                 &fbf::DateArgs {
@@ -789,7 +791,7 @@ fn build_flatbuf_field_file<'fbb>(
             (fbf::Type::Date, Some(date.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Timestamp(unit, tz) => {
+        ArrowType::DateTime(Dt::Timestamp(unit, tz)) => {
             let unit = match unit {
                 TimeUnit::Seconds => fbf::TimeUnit::SECOND,
                 TimeUnit::Milliseconds => fbf::TimeUnit::MILLISECOND,
@@ -807,9 +809,9 @@ fn build_flatbuf_field_file<'fbb>(
             (fbf::Type::Timestamp, Some(ts.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Time32(unit) | ArrowType::Time64(unit) => {
+        ArrowType::DateTime(Dt::Time32(unit) | Dt::Time64(unit)) => {
             let bit_width: i32 =
-                if matches!(&field.dtype, ArrowType::Time32(_)) { 32 } else { 64 };
+                if matches!(&field.dtype, ArrowType::DateTime(Dt::Time32(_))) { 32 } else { 64 };
             let unit = match unit {
                 TimeUnit::Seconds => fbf::TimeUnit::SECOND,
                 TimeUnit::Milliseconds => fbf::TimeUnit::MILLISECOND,
@@ -826,7 +828,7 @@ fn build_flatbuf_field_file<'fbb>(
             (fbf::Type::Time, Some(time.as_union_value()), None)
         }
         #[cfg(feature = "datetime")]
-        ArrowType::Duration64(unit) => {
+        ArrowType::DateTime(Dt::Duration64(unit)) => {
             let unit = match unit {
                 TimeUnit::Seconds => fbf::TimeUnit::SECOND,
                 TimeUnit::Milliseconds => fbf::TimeUnit::MILLISECOND,
