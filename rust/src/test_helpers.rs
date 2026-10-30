@@ -232,7 +232,7 @@ pub(crate) fn dt32_col() -> FieldArray {
 }
 
 #[cfg(feature = "datetime")]
-/// Build a non-nullable `Date64` column - unit is milliseconds
+/// Build a non-nullable `Date64` column in milliseconds.
 pub(crate) fn dt64_col() -> FieldArray {
     FieldArray::new(
         Field {
