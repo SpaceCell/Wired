@@ -289,6 +289,26 @@ mod parquet_nullable_roundtrip_tests {
                 Dt::Time64(TimeUnit::Nanoseconds),
                 time_value,
             ));
+            cols.push(temporal32(
+                "time32_s",
+                Dt::Time32(TimeUnit::Seconds),
+                |i| time_value(i) as i32,
+            ));
+            cols.push(temporal32(
+                "time32_ns",
+                Dt::Time32(TimeUnit::Nanoseconds),
+                |i| time_value(i) as i32,
+            ));
+            cols.push(temporal64(
+                "time64_s",
+                Dt::Time64(TimeUnit::Seconds),
+                time_value,
+            ));
+            cols.push(temporal64(
+                "time64_us",
+                Dt::Time64(TimeUnit::Microseconds),
+                time_value,
+            ));
         }
 
         #[cfg(feature = "decimal")]
@@ -513,6 +533,38 @@ mod parquet_nullable_roundtrip_tests {
                 "time64_ns",
                 ArrowType::DateTime(Dt::Time64(TimeUnit::Nanoseconds)),
                 TimeUnit::Nanoseconds,
+                time_value,
+            );
+            // Parquet has no seconds unit, so Time32 seconds come back as
+            // Time32 milliseconds.
+            assert_temporal32(
+                out,
+                "time32_s",
+                ArrowType::DateTime(Dt::Time32(TimeUnit::Milliseconds)),
+                TimeUnit::Milliseconds,
+                |i| time_value(i) as i32 * 1000,
+            );
+            // TIME(NANOS) is INT64 in Parquet, so Time32 nanoseconds widen.
+            assert_temporal64(
+                out,
+                "time32_ns",
+                ArrowType::DateTime(Dt::Time64(TimeUnit::Nanoseconds)),
+                TimeUnit::Nanoseconds,
+                time_value,
+            );
+            // Time64 seconds scale to milliseconds and narrow to INT32.
+            assert_temporal32(
+                out,
+                "time64_s",
+                ArrowType::DateTime(Dt::Time32(TimeUnit::Milliseconds)),
+                TimeUnit::Milliseconds,
+                |i| time_value(i) as i32 * 1000,
+            );
+            assert_temporal64(
+                out,
+                "time64_us",
+                ArrowType::DateTime(Dt::Time64(TimeUnit::Microseconds)),
+                TimeUnit::Microseconds,
                 time_value,
             );
         }

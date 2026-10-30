@@ -246,3 +246,59 @@ fn explicit_schema_controls_types() {
     assert!(matches!(tbl.cols[0].field.dtype, ArrowType::String));
     assert_eq!(tbl.n_rows, 3);
 }
+
+#[cfg(feature = "datetime")]
+#[test]
+fn date_columns_roundtrip_with_their_dt() {
+    use minarrow::{DatetimeArray, Dt, TemporalArray};
+
+    let mask = Bitmask::from_bools(&[true, false, true]);
+    let date32 = FieldArray::new(
+        Field::new("d32", ArrowType::DateTime(Dt::Date32), true, None),
+        Array::from_datetime_i32(DatetimeArray::from_vec64(
+            Vec64::from_slice(&[19_000, 0, -5]),
+            Some(mask.clone()),
+            Dt::Date32,
+        )),
+    );
+    let date64 = FieldArray::new(
+        Field::new("d64", ArrowType::DateTime(Dt::Date64), true, None),
+        Array::from_datetime_i64(DatetimeArray::from_vec64(
+            Vec64::from_slice(&[1_641_600_000_000, 0, -86_400_000]),
+            Some(mask),
+            Dt::Date64,
+        )),
+    );
+    let table = Table::new("dates".to_string(), Some(vec![date32, date64]));
+    let schema: Vec<Field> = table.cols.iter().map(|c| c.field.as_ref().clone()).collect();
+
+    let mut out = Vec::new();
+    encode_table_json(&table, &mut out, &JsonEncodeOptions::default()).unwrap();
+    let opts = JsonDecodeOptions {
+        schema: Some(schema),
+        ..Default::default()
+    };
+    let decoded = decode_json(Cursor::new(&out[..]), &opts).unwrap();
+
+    assert_eq!(decoded.n_rows, 3);
+    assert_eq!(decoded.cols[0].field.dtype, ArrowType::DateTime(Dt::Date32));
+    assert_eq!(decoded.cols[1].field.dtype, ArrowType::DateTime(Dt::Date64));
+    match &decoded.cols[0].array {
+        Array::TemporalArray(TemporalArray::Datetime32(a)) => {
+            assert_eq!(a.dtype, Dt::Date32);
+            assert_eq!(a.data.as_ref()[0], 19_000);
+            assert_eq!(a.data.as_ref()[2], -5);
+            assert!(a.null_mask.as_ref().is_some_and(|m| !m.get(1)));
+        }
+        other => panic!("d32 decoded as {other:?}"),
+    }
+    match &decoded.cols[1].array {
+        Array::TemporalArray(TemporalArray::Datetime64(a)) => {
+            assert_eq!(a.dtype, Dt::Date64);
+            assert_eq!(a.data.as_ref()[0], 1_641_600_000_000);
+            assert_eq!(a.data.as_ref()[2], -86_400_000);
+            assert!(a.null_mask.as_ref().is_some_and(|m| !m.get(1)));
+        }
+        other => panic!("d64 decoded as {other:?}"),
+    }
+}

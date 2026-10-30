@@ -229,6 +229,39 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "datetime")]
+    #[test]
+    fn windowed_timestamp_columns_keep_unit_and_timezone() {
+        use minarrow::enums::time_units::TimeUnit;
+        use minarrow::{Array, ArrowType, DatetimeArray, Dt, FieldArray, TemporalArray};
+
+        use crate::models::readers::ipc::file_table::FileTableReader;
+
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let dtype = Dt::Timestamp(TimeUnit::Microseconds, Some("America/New_York".into()));
+        let ts = FieldArray::new(
+            Field::new("ts", ArrowType::DateTime(dtype.clone()), false, None),
+            Array::from_datetime_i64(DatetimeArray::from_slice(&[10, 20, 30], dtype.clone())),
+        );
+        let table = Table::new("t", Some(vec![ts]));
+        let schema: Vec<Field> = table.cols.iter().map(|c| (*c.field).clone()).collect();
+
+        write_tables_to_file_sync(&path, std::slice::from_ref(&table), schema).unwrap();
+
+        let reader = FileTableReader::open(&path).unwrap();
+        let got = reader.read_batch_window(0, 0, 2).unwrap();
+        assert_eq!(got.n_rows, 2);
+        assert_eq!(got.cols[0].field.dtype, ArrowType::DateTime(dtype.clone()));
+        match &got.cols[0].array {
+            Array::TemporalArray(TemporalArray::Datetime64(a)) => {
+                assert_eq!(a.data.as_slice(), &[10, 20]);
+                assert_eq!(a.dtype, dtype);
+            }
+            other => panic!("windowed timestamp column decoded as {other:?}"),
+        }
+    }
+
     #[test]
     fn writes_multiple_tables_via_file_protocol() {
         use crate::models::readers::ipc::file_table::FileTableReader;

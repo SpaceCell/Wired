@@ -600,4 +600,33 @@ mod tests {
             ParquetLogicalType::Decimal { precision: 38, scale: 6 }
         );
     }
+
+    #[cfg(feature = "datetime")]
+    #[test]
+    fn duration_and_interval_have_no_parquet_type() {
+        use minarrow::enums::time_units::IntervalUnit;
+
+        for dt in [
+            Dt::Duration32(TimeUnit::Seconds),
+            Dt::Duration64(TimeUnit::Nanoseconds),
+            Dt::Interval(IntervalUnit::DaysTime),
+        ] {
+            assert!(
+                arrow_type_to_parquet(&ArrowType::DateTime(dt.clone())).is_err(),
+                "{dt:?} should be rejected"
+            );
+        }
+    }
+
+    #[cfg(feature = "datetime")]
+    #[test]
+    fn timezone_maps_to_utc_adjusted_timestamp_and_reads_back_as_utc() {
+        let (phys, logical) = arrow_type_to_parquet(&ArrowType::DateTime(Dt::Timestamp(
+            TimeUnit::Microseconds,
+            Some("America/New_York".into()),
+        )))
+        .unwrap();
+        assert_eq!(phys, ParquetPhysicalType::Int64);
+        assert_eq!(logical, ParquetLogicalType::TimestampMicros { utc: true });
+    }
 }
