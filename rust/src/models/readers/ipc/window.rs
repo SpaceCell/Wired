@@ -168,14 +168,14 @@ fn window_array(array: &Array, offset: usize, len: usize) -> io::Result<Array> {
                     TemporalArray::Datetime32(Arc::new(DatetimeArray {
                         data: window_buffer(&arr.data, offset, len),
                         null_mask: window_mask(arr.null_mask.as_ref(), offset, len),
-                        time_unit: arr.time_unit,
+                        dtype: arr.dtype.clone(),
                     }))
                 }
                 TemporalArray::Datetime64(arr) => {
                     TemporalArray::Datetime64(Arc::new(DatetimeArray {
                         data: window_buffer(&arr.data, offset, len),
                         null_mask: window_mask(arr.null_mask.as_ref(), offset, len),
-                        time_unit: arr.time_unit,
+                        dtype: arr.dtype.clone(),
                     }))
                 }
                 TemporalArray::Null => TemporalArray::Null,

@@ -20,7 +20,7 @@ mod pyarrow_parquet_tests {
     use lightstream::models::readers::parquet::{load_parquet_table, load_parquet_table_cols};
     use minarrow::{Array, ArrowType, MaskedArray, NumericArray, Table, TextArray};
     #[cfg(all(feature = "datetime", feature = "decimal", feature = "snappy"))]
-    use minarrow::{TemporalArray, TimeUnit};
+    use minarrow::{Dt, TemporalArray, TimeUnit};
 
     fn open(name: &str) -> BufReader<File> {
         let path = format!("{}/pyarrow-roundtrip/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -212,7 +212,7 @@ mod pyarrow_parquet_tests {
         fn temporal32(table: &Table, name: &str, unit: TimeUnit) -> Vec<Option<i32>> {
             match column(table, name) {
                 Array::TemporalArray(TemporalArray::Datetime32(a)) => {
-                    assert_eq!(a.time_unit, unit, "{name} unit");
+                    assert_eq!(a.time_unit(), unit, "{name} unit");
                     (0..a.len()).map(|i| a.get(i)).collect()
                 }
                 other => panic!("{name}: expected Datetime32, got {other:?}"),
@@ -221,31 +221,31 @@ mod pyarrow_parquet_tests {
         fn temporal64(table: &Table, name: &str, unit: TimeUnit) -> Vec<Option<i64>> {
             match column(table, name) {
                 Array::TemporalArray(TemporalArray::Datetime64(a)) => {
-                    assert_eq!(a.time_unit, unit, "{name} unit");
+                    assert_eq!(a.time_unit(), unit, "{name} unit");
                     (0..a.len()).map(|i| a.get(i)).collect()
                 }
                 other => panic!("{name}: expected Datetime64, got {other:?}"),
             }
         }
 
-        assert_eq!(column_dtype(&table, "date"), ArrowType::Date32);
+        assert_eq!(column_dtype(&table, "date"), ArrowType::DateTime(Dt::Date32));
         assert_eq!(
             temporal32(&table, "date", TimeUnit::Days),
             [Some(0), Some(1), None, Some(19_000), Some(-5)]
         );
-        assert_eq!(column_dtype(&table, "time_ms"), ArrowType::Time32(TimeUnit::Milliseconds));
+        assert_eq!(column_dtype(&table, "time_ms"), ArrowType::DateTime(Dt::Time32(TimeUnit::Milliseconds)));
         assert_eq!(
             temporal32(&table, "time_ms", TimeUnit::Milliseconds),
             [Some(0), Some(1_000), None, Some(43_200_000), Some(86_399_999)]
         );
-        assert_eq!(column_dtype(&table, "time_us"), ArrowType::Time64(TimeUnit::Microseconds));
+        assert_eq!(column_dtype(&table, "time_us"), ArrowType::DateTime(Dt::Time64(TimeUnit::Microseconds)));
         assert_eq!(
             temporal64(&table, "time_us", TimeUnit::Microseconds),
             [Some(0), None, Some(2_000_000), Some(43_200_000_000), Some(86_399_999_999)]
         );
         assert_eq!(
             column_dtype(&table, "ts_ms"),
-            ArrowType::Timestamp(TimeUnit::Milliseconds, None)
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Milliseconds, None))
         );
         assert_eq!(
             temporal64(&table, "ts_ms", TimeUnit::Milliseconds),
@@ -253,7 +253,7 @@ mod pyarrow_parquet_tests {
         );
         assert_eq!(
             column_dtype(&table, "ts_us"),
-            ArrowType::Timestamp(TimeUnit::Microseconds, None)
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Microseconds, None))
         );
         assert_eq!(
             temporal64(&table, "ts_us", TimeUnit::Microseconds),
@@ -261,7 +261,7 @@ mod pyarrow_parquet_tests {
         );
         assert_eq!(
             column_dtype(&table, "ts_ns"),
-            ArrowType::Timestamp(TimeUnit::Nanoseconds, None)
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Nanoseconds, None))
         );
         assert_eq!(
             temporal64(&table, "ts_ns", TimeUnit::Nanoseconds),
@@ -270,7 +270,7 @@ mod pyarrow_parquet_tests {
         // pyarrow writes a zoned timestamp with isAdjustedToUTC set.
         assert_eq!(
             column_dtype(&table, "ts_us_utc"),
-            ArrowType::Timestamp(TimeUnit::Microseconds, Some("UTC".to_string()))
+            ArrowType::DateTime(Dt::Timestamp(TimeUnit::Microseconds, Some("UTC".to_string())))
         );
         assert_eq!(
             temporal64(&table, "ts_us_utc", TimeUnit::Microseconds),

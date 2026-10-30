@@ -19,6 +19,8 @@
 use std::sync::Arc;
 
 use minarrow::ffi::arrow_dtype::CategoricalIndexType;
+#[cfg(feature = "datetime")]
+use minarrow::ffi::arrow_dtype::Dt;
 use minarrow::traits::masked_array::MaskedArray;
 use minarrow::{
     Array, ArrowType, BooleanArray, CategoricalArray, Field, FieldArray, FloatArray, IntegerArray,
@@ -132,13 +134,13 @@ impl ColumnBuilder {
                 ),
             },
             #[cfg(feature = "datetime")]
-            ArrowType::Date32 => ColumnBuilder::Date32(minarrow::DatetimeArray::with_capacity(
-                n_rows, nullable, None,
-            )),
+            ArrowType::DateTime(Dt::Date32) => ColumnBuilder::Date32(
+                minarrow::DatetimeArray::with_capacity(n_rows, nullable, Dt::Date32),
+            ),
             #[cfg(feature = "datetime")]
-            ArrowType::Date64 => ColumnBuilder::Date64(minarrow::DatetimeArray::with_capacity(
-                n_rows, nullable, None,
-            )),
+            ArrowType::DateTime(Dt::Date64) => ColumnBuilder::Date64(
+                minarrow::DatetimeArray::with_capacity(n_rows, nullable, Dt::Date64),
+            ),
             #[cfg(feature = "extended_numeric_types")]
             ArrowType::Int8 => ColumnBuilder::Int8(IntegerArray::with_capacity(n_rows, nullable)),
             #[cfg(feature = "extended_numeric_types")]

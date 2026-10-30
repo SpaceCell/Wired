@@ -762,6 +762,158 @@ mod integration {
         assert_eq!(roundtripped, table); // derives PartialEq so includes masks
     }
 
+    /// Every `Dt` variant that the IPC schema supports, covering each clock
+    /// unit and timezone form.
+    #[cfg(feature = "datetime")]
+    fn ipc_temporal_dtypes() -> Vec<Dt> {
+        let units = [
+            TimeUnit::Seconds,
+            TimeUnit::Milliseconds,
+            TimeUnit::Microseconds,
+            TimeUnit::Nanoseconds,
+        ];
+        let mut dtypes = vec![Dt::Date32, Dt::Date64];
+        for unit in units {
+            dtypes.push(Dt::Time32(unit));
+            dtypes.push(Dt::Time64(unit));
+            dtypes.push(Dt::Duration64(unit));
+            dtypes.push(Dt::Timestamp(unit, None));
+            dtypes.push(Dt::Timestamp(unit, Some("UTC".to_string())));
+            dtypes.push(Dt::Timestamp(unit, Some("America/New_York".to_string())));
+        }
+        dtypes
+    }
+
+    /// One nullable column of the given temporal type, with a null at row 1.
+    #[cfg(feature = "datetime")]
+    fn temporal_table(dtype: &Dt) -> Table {
+        let mask = {
+            let mut m = Bitmask::new_set_all(4, true);
+            m.set_false(1);
+            m
+        };
+        let array = match dtype {
+            Dt::Date32 | Dt::Time32(_) | Dt::Duration32(_) => {
+                Array::from_datetime_i32(DatetimeArray::from_vec64(
+                    Vec64::from_slice(&[19_000, 0, -5, 86_399]),
+                    Some(mask),
+                    dtype.clone(),
+                ))
+            }
+            _ => Array::from_datetime_i64(DatetimeArray::from_vec64(
+                Vec64::from_slice(&[1_782_999_000_000_000_000, 0, -1, 1]),
+                Some(mask),
+                dtype.clone(),
+            )),
+        };
+        let col = FieldArray::new(
+            Field::new("t", ArrowType::DateTime(dtype.clone()), true, None),
+            array,
+        );
+        Table::new("temporal".to_string(), Some(vec![col]))
+    }
+
+    /// Asserts that the decoded column keeps the field type and the array's
+    /// own `Dt`, including unit and timezone.
+    #[cfg(feature = "datetime")]
+    fn assert_temporal_roundtrip(got: &Table, want: &Table, dtype: &Dt, via: &str) {
+        assert_eq!(got.n_rows, want.n_rows, "{dtype:?} via {via}");
+        assert_eq!(
+            got.cols[0].field.dtype,
+            ArrowType::DateTime(dtype.clone()),
+            "{dtype:?} field dtype via {via}"
+        );
+        let got_dtype = match &got.cols[0].array {
+            Array::TemporalArray(TemporalArray::Datetime32(a)) => a.dtype.clone(),
+            Array::TemporalArray(TemporalArray::Datetime64(a)) => a.dtype.clone(),
+            other => panic!("{dtype:?} via {via} decoded as {other:?}"),
+        };
+        assert_eq!(&got_dtype, dtype, "{dtype:?} array dtype via {via}");
+        assert_eq!(got.cols[0].array, want.cols[0].array, "{dtype:?} values via {via}");
+    }
+
+    #[cfg(feature = "datetime")]
+    #[tokio::test]
+    async fn test_temporal_dtypes_roundtrip_file_and_stream() {
+        use tempfile::tempdir;
+        for dtype in ipc_temporal_dtypes() {
+            let table = temporal_table(&dtype);
+            let schema: Vec<Field> = table.cols.iter().map(|c| c.field.as_ref().clone()).collect();
+            let dir = tempdir().unwrap();
+
+            // File protocol read through the file reader and the mmap reader.
+            let file_path = dir.path().join("temporal_file.arrow");
+            {
+                let file = tokio::fs::File::create(&file_path).await.unwrap();
+                let mut writer =
+                    TableWriter::new(file, schema.clone(), IPCMessageProtocol::File, None).unwrap();
+                writer.write_all_tables(vec![table.clone()]).await.unwrap();
+            }
+            let got = FileTableReader::open(&file_path).unwrap().read_batch(0).unwrap();
+            assert_temporal_roundtrip(&got, &table, &dtype, "file");
+            #[cfg(feature = "mmap")]
+            {
+                use ::lightstream::models::readers::ipc::mmap_table::MmapTableReader;
+                let got = MmapTableReader::open(&file_path).unwrap().read_batch(0).unwrap();
+                assert_temporal_roundtrip(&got, &table, &dtype, "mmap");
+            }
+
+            // Stream protocol.
+            let stream_path = dir.path().join("temporal_stream.arrow");
+            {
+                let file = tokio::fs::File::create(&stream_path).await.unwrap();
+                let mut writer =
+                    TableWriter::new(file, schema, IPCMessageProtocol::Stream, None).unwrap();
+                writer.write_all_tables(vec![table.clone()]).await.unwrap();
+            }
+            let stream = DiskByteStream::open(&stream_path, BufferChunkSize::Custom(128 * 1024))
+                .await
+                .unwrap();
+            let mut reader = TableReader::<Vec64<u8>>::new(
+                stream,
+                128 * 1024,
+                IPCMessageProtocol::Stream,
+                None,
+            );
+            let got = match reader.next().await {
+                Some(Ok(t)) => t,
+                other => panic!("{dtype:?} stream read: {other:?}"),
+            };
+            assert_temporal_roundtrip(&got, &table, &dtype, "stream");
+        }
+    }
+
+    /// Duration32 and Interval have no IPC schema encoding.
+    #[cfg(feature = "datetime")]
+    #[tokio::test]
+    async fn test_unsupported_temporal_dtypes_are_rejected_on_write() {
+        use tempfile::tempdir;
+        let interval = Table::new(
+            "interval".to_string(),
+            Some(vec![FieldArray::new(
+                Field::new(
+                    "t",
+                    ArrowType::DateTime(Dt::Interval(IntervalUnit::DaysTime)),
+                    false,
+                    None,
+                ),
+                Array::from_int32(IntegerArray::from_vec64(Vec64::from_slice(&[1, 2]), None)),
+            )]),
+        );
+        for table in [temporal_table(&Dt::Duration32(TimeUnit::Seconds)), interval] {
+            let schema: Vec<Field> = table.cols.iter().map(|c| c.field.as_ref().clone()).collect();
+            let dir = tempdir().unwrap();
+            let file = tokio::fs::File::create(dir.path().join("rejected.arrow"))
+                .await
+                .unwrap();
+            let outcome = match TableWriter::new(file, schema, IPCMessageProtocol::Stream, None) {
+                Err(e) => Err(e),
+                Ok(mut writer) => writer.write_all_tables(vec![table.clone()]).await,
+            };
+            assert!(outcome.is_err(), "{:?} should be rejected", table.cols[0].field.dtype);
+        }
+    }
+
     #[tokio::test]
     async fn test_file_roundtrip_via_disk() {
         use tempfile::tempdir;

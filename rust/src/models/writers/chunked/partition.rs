@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use minarrow::Table;
 #[cfg(feature = "datetime")]
-use minarrow::{DatetimeArray, TimeUnit};
+use minarrow::{DatetimeArray, Dt, TimeUnit};
 
 /// How a chunked writer groups its chunks into partition directories.
 #[derive(Clone)]
@@ -82,7 +82,7 @@ impl fmt::Debug for PartitionType {
 /// Format an epoch-nanosecond time as `date=YYYY-MM-DD/hour=HH` in UTC.
 #[cfg(feature = "datetime")]
 fn auto_partition(time_ns: u64) -> String {
-    let time = DatetimeArray::from_slice(&[time_ns as i64], Some(TimeUnit::Nanoseconds));
+    let time = DatetimeArray::from_slice(&[time_ns as i64], Dt::Timestamp(TimeUnit::Nanoseconds, None));
     let (year, month, day, hour, ..) = time
         .tuple_dt(0)
         .expect("nanosecond timestamp within the supported date range");

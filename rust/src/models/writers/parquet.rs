@@ -45,7 +45,7 @@
 use std::io::{Seek, Write};
 
 #[cfg(feature = "datetime")]
-use minarrow::TemporalArray;
+use minarrow::{Dt, TemporalArray};
 #[cfg(feature = "datetime")]
 use minarrow::ArrowType;
 use minarrow::{Array, NumericArray, Table, TextArray};
@@ -149,11 +149,13 @@ pub fn write_parquet_table<W: Write + Seek>(
         let (phys, _) = arrow_type_to_parquet(&col.field.dtype)?;
         let temporal = match &col.field.dtype {
             #[cfg(feature = "datetime")]
-            ArrowType::Date32
-            | ArrowType::Date64
-            | ArrowType::Timestamp(_, _)
-            | ArrowType::Time32(_)
-            | ArrowType::Time64(_) => true,
+            ArrowType::DateTime(
+                Dt::Date32
+                | Dt::Date64
+                | Dt::Timestamp(_, _)
+                | Dt::Time32(_)
+                | Dt::Time64(_),
+            ) => true,
             _ => false,
         };
         let (unit_mul, unit_div) = temporal_unit_scale(&col.field.dtype);
