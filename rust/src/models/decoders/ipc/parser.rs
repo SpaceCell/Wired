@@ -15,6 +15,7 @@
 //! - UTF-8 / LargeUTF-8 (32/64-bit offsets; `LargeString` behind `large_string`)
 //! - Dictionary-encoded text (UInt32 by default; UInt8/UInt16/UInt64 behind `extended_categorical`)
 //! - Date32/Date64 behind `datetime`
+//! - Null, which doesn't use any buffers on the wire
 //!
 //! ## Zero-copy behaviour
 //! If an Arc-backed body is supplied and buffers are correctly aligned, columns are
@@ -142,6 +143,12 @@ impl RecordBatchParser {
                     io::ErrorKind::InvalidData,
                     format!("Row count mismatch for {}", field.name),
                 ));
+            }
+
+            // The Arrow Null layout has no buffers, including the null mask.
+            if field.dtype == ArrowType::Null {
+                cols.push(FieldArray::new(field.clone(), Array::Null));
+                continue;
             }
 
             let null_mask = Self::extract_null_mask(
@@ -1008,6 +1015,16 @@ pub fn decode_record_batch(
             ));
         }
 
+        let projected = projection.is_none_or(|p| p.contains(&col_idx));
+
+        // The Arrow Null layout has no buffers, including the null mask.
+        if field.dtype == ArrowType::Null {
+            if projected {
+                cols.push(FieldArray::new(field.clone(), Array::Null));
+            }
+            continue;
+        }
+
         // Extract null mask from the shared buffer.
         // This always runs even for skipped columns to keep buffer_idx in sync.
         let null_mask = extract_null_mask(
@@ -1024,7 +1041,6 @@ pub fn decode_record_batch(
 
         // Skip non-projected columns by advancing past their data buffer
         // descriptors without materialising any arrays or SharedBuffer slices.
-        let projected = projection.is_none_or(|p| p.contains(&col_idx));
         if !projected {
             buffer_idx += data_buffer_count(&field.dtype);
             continue;
@@ -1845,6 +1861,7 @@ fn extract_base_type(fb_field: &fb::Field) -> io::Result<ArrowType> {
             })?;
             Ok(ArrowType::DateTime(Dt::Duration64(convert_time_unit_fb(d.unit())?)))
         }
+        fb::Type::Null => Ok(ArrowType::Null),
         fb::Type::Bool => Ok(ArrowType::Boolean),
         #[cfg(feature = "decimal")]
         fb::Type::Decimal => {
@@ -2018,6 +2035,7 @@ pub fn convert_fb_field_to_arrow(
             fbf::Type::Utf8 => ArrowType::String,
             #[cfg(feature = "large_string")]
             fbf::Type::LargeUtf8 => ArrowType::LargeString,
+            fbf::Type::Null => ArrowType::Null,
             fbf::Type::Bool => ArrowType::Boolean,
             #[cfg(feature = "datetime")]
             fbf::Type::Date => {

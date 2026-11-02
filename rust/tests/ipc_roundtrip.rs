@@ -914,6 +914,89 @@ mod integration {
         }
     }
 
+    /// Null-typed columns, as one column on its own and between nullable and
+    /// non-nullable columns of other types.
+    fn null_dtype_tables() -> Vec<Table> {
+        let lone = Table::new(
+            "null_only".to_string(),
+            Some(vec![FieldArray::from_arr("n", Array::Null)]),
+        );
+        let mixed = Table::new(
+            "null_mixed".to_string(),
+            Some(vec![
+                FieldArray::from_arr(
+                    "i",
+                    Array::from_int32(IntegerArray::from_vec64(
+                        Vec64::from_slice(&[1, 2, 3]),
+                        Some(make_alternating_mask(3)),
+                    )),
+                ),
+                FieldArray::from_arr("n", Array::Null),
+                FieldArray::from_arr(
+                    "s",
+                    Array::from_string32(StringArray::from_slice(&["a", "bb", "ccc"])),
+                ),
+                FieldArray::from_arr(
+                    "f",
+                    Array::from_float64(FloatArray::from_slice(&[0.5, 1.5, 2.5])),
+                ),
+            ]),
+        );
+        vec![lone, mixed]
+    }
+
+    #[tokio::test]
+    async fn test_null_dtype_roundtrip_file_and_stream() {
+        use tempfile::tempdir;
+        for table in null_dtype_tables() {
+            let schema: Vec<Field> = table.cols.iter().map(|c| c.field.as_ref().clone()).collect();
+            let dir = tempdir().unwrap();
+
+            // File protocol read through the file reader and the mmap reader.
+            let file_path = dir.path().join("null_file.arrow");
+            {
+                let file = tokio::fs::File::create(&file_path).await.unwrap();
+                let mut writer =
+                    TableWriter::new(file, schema.clone(), IPCMessageProtocol::File, None).unwrap();
+                writer.write_all_tables(vec![table.clone()]).await.unwrap();
+            }
+            let mut got = FileTableReader::open(&file_path).unwrap().read_batch(0).unwrap();
+            got.name = table.name.clone();
+            assert_eq!(got, table, "{} via file", table.name);
+            #[cfg(feature = "mmap")]
+            {
+                use ::lightstream::models::readers::ipc::mmap_table::MmapTableReader;
+                let mut got = MmapTableReader::open(&file_path).unwrap().read_batch(0).unwrap();
+                got.name = table.name.clone();
+                assert_eq!(got, table, "{} via mmap", table.name);
+            }
+
+            // Stream protocol.
+            let stream_path = dir.path().join("null_stream.arrow");
+            {
+                let file = tokio::fs::File::create(&stream_path).await.unwrap();
+                let mut writer =
+                    TableWriter::new(file, schema, IPCMessageProtocol::Stream, None).unwrap();
+                writer.write_all_tables(vec![table.clone()]).await.unwrap();
+            }
+            let stream = DiskByteStream::open(&stream_path, BufferChunkSize::Custom(128 * 1024))
+                .await
+                .unwrap();
+            let mut reader = TableReader::<Vec64<u8>>::new(
+                stream,
+                128 * 1024,
+                IPCMessageProtocol::Stream,
+                None,
+            );
+            let mut got = match reader.next().await {
+                Some(Ok(t)) => t,
+                other => panic!("{} stream read: {other:?}", table.name),
+            };
+            got.name = table.name.clone();
+            assert_eq!(got, table, "{} via stream", table.name);
+        }
+    }
+
     #[tokio::test]
     async fn test_file_roundtrip_via_disk() {
         use tempfile::tempdir;
