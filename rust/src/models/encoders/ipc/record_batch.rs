@@ -460,6 +460,13 @@ pub(crate) fn compute_body_layout<'a, B: StreamBuffer>(
                 fb_field_nodes.push(fbm::FieldNode::new(len as i64, null_count as i64));
             }
 
+            // The Arrow Null layout has no buffers. The field node records the
+            // view's row count as both length and null count, because
+            // `Array::Null` holds no length.
+            Array::Null => {
+                fb_field_nodes.push(fbm::FieldNode::new(view.len as i64, view.len as i64));
+            }
+
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,

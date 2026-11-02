@@ -232,6 +232,10 @@ fn build_flatbuf_field<'fbb>(
             );
             (fbm::Type::FloatingPoint, Some(fp.as_union_value()), None)
         }
+        ArrowType::Null => {
+            let null = fbm::Null::create(fbb, &fbm::NullArgs {});
+            (fbm::Type::Null, Some(null.as_union_value()), None)
+        }
         ArrowType::Boolean => {
             let bl = fbm::Bool::create(fbb, &fbm::BoolArgs {});
             (fbm::Type::Bool, Some(bl.as_union_value()), None)
@@ -756,6 +760,10 @@ fn build_flatbuf_field_file<'fbb>(
                 },
             );
             (fbf::Type::FloatingPoint, Some(fp.as_union_value()), None)
+        }
+        ArrowType::Null => {
+            let null = fbf::Null::create(fbb, &fbf::NullArgs {});
+            (fbf::Type::Null, Some(null.as_union_value()), None)
         }
         ArrowType::Boolean => {
             let bl = fbf::Bool::create(fbb, &fbf::BoolArgs {});
