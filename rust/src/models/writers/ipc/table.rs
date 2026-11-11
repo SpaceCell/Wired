@@ -82,20 +82,17 @@ where
 
     /// Get the schema used for this writer.
     pub fn schema(&self) -> &[Field] {
-        &self.sink.schema
+        &self.sink.core.schema
     }
 
     /// Register a dictionary with the given id and values.
     pub fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
-        self.sink.codec.register_dictionary(dict_id, values.clone());
-        if let Some(writer) = &mut self.sink.file_writer {
-            writer.register_dictionary(dict_id, values);
-        }
+        self.sink.core.register_dictionary(dict_id, values);
     }
 
     /// Return the protocol in use (Stream or File).
     pub fn protocol(&self) -> IPCMessageProtocol {
-        self.sink.protocol
+        self.sink.core.protocol
     }
 
     /// Write a single table to the sink and flush all output.

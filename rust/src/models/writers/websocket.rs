@@ -156,11 +156,11 @@ impl WebSocketTableWriter {
 
 impl IPCTransportWriter for WebSocketTableWriter {
     fn schema(&self) -> &[Field] {
-        &self.sink.schema
+        &self.sink.core.schema
     }
 
     fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
-        self.sink.codec.register_dictionary(dict_id, values);
+        self.sink.core.codec.register_dictionary(dict_id, values);
     }
 
     async fn write_table(&mut self, table: impl Into<TableV> + Send) -> io::Result<()> {

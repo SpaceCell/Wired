@@ -60,7 +60,7 @@ impl QuicTableWriter {
         table: impl Into<TableV> + Send,
         metadata: Vec<(String, String)>,
     ) -> io::Result<()> {
-        self.sink.encode_frame(table.into(), Some(metadata.as_slice()))?;
+        self.sink.core.encode_frame(table.into(), Some(metadata.as_slice()))?;
         SinkExt::flush(&mut self.sink).await?;
         Ok(())
     }
@@ -69,12 +69,12 @@ impl QuicTableWriter {
 impl IPCTransportWriter for QuicTableWriter {
     /// Get the schema used for this writer.
     fn schema(&self) -> &[Field] {
-        &self.sink.schema
+        &self.sink.core.schema
     }
 
     /// Register a dictionary for categorical columns.
     fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
-        self.sink.codec.register_dictionary(dict_id, values);
+        self.sink.core.codec.register_dictionary(dict_id, values);
     }
 
     /// Write a single table and flush.

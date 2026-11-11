@@ -15,8 +15,14 @@
 //! - Column data is decoded via SharedBuffer mapping without userspace copies.
 //! - Each batch is yielded individually as a SharedBuffer-backed Table.
 //! - The arena is recycled when all previous batch SharedBuffer views are dropped.
+//!
+//! The decode loop itself is independent of the transport. [`TableStreamDecoder`]
+//! drives it over an `AsyncRead` source, and
+//! [`SyncTableReader`](crate::models::readers::ipc::sync_table::SyncTableReader)
+//! drives the same loop over a blocking `std::io::Read` source.
 
 use std::io;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -36,6 +42,9 @@ use crate::traits::stream_buffer::StreamBuffer;
 
 const DEFAULT_CHUNK: usize = 64 * 1024;
 
+/// Largest read issued while discarding body padding.
+const SKIP_PAD_CHUNK: usize = 1024;
+
 /// An owned Arrow `custom_metadata` key/value pair decoded from a record
 /// batch message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +53,42 @@ pub struct KeyValue {
     pub key: String,
     /// Metadata value.
     pub value: String,
+}
+
+/// Byte source read by the IPC table decode loop.
+///
+/// The async [`TableStreamDecoder`] and the blocking `SyncTableReader` share
+/// one decode loop, [`TableStreamCore`], and differ only in how bytes arrive.
+/// Async sources return `Poll::Pending` when no bytes are ready. Blocking
+/// sources wait for bytes and always return `Poll::Ready`.
+///
+/// # Safety
+///
+/// `Poll::Ready(Ok(n))` must satisfy `n <= buf.len()`, with the first `n`
+/// bytes of `buf` initialised. The decode loop commits those bytes to its
+/// buffers on that basis. `Ok(0)` signals end of stream.
+pub(crate) unsafe trait IpcByteSource {
+    /// Read into `buf` and return the number of bytes initialised.
+    fn poll_read_uninit(&mut self, buf: &mut [MaybeUninit<u8>]) -> Poll<io::Result<usize>>;
+}
+
+/// [`IpcByteSource`] over an `AsyncRead` transport, polled from a task context.
+struct AsyncByteSource<'a, 'b> {
+    source: &'a mut (dyn AsyncRead + Unpin + Send),
+    cx: &'a mut Context<'b>,
+}
+
+// SAFETY: `ReadBuf::uninit` tracks the bytes `poll_read` initialises, and
+// `filled().len()` never exceeds the slice it wraps.
+unsafe impl IpcByteSource for AsyncByteSource<'_, '_> {
+    fn poll_read_uninit(&mut self, buf: &mut [MaybeUninit<u8>]) -> Poll<io::Result<usize>> {
+        let mut read_buf = ReadBuf::uninit(buf);
+        match Pin::new(&mut *self.source).poll_read(self.cx, &mut read_buf) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(read_buf.filled().len())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 /// Two-step read state machine.
@@ -63,17 +108,15 @@ enum Phase {
     SkipPad { remaining: usize },
 }
 
-/// Direct Arrow IPC decoder with zero-copy record batch decoding.
+/// Transport-independent state of the Arrow IPC table decode loop.
 ///
-/// Yields each batch as an individual SharedBuffer-backed Table. The body
-/// Vec64 is recycled across batches - after the caller drops the previous
-/// Table, the SharedBuffer releases the Vec64 for reuse.
+/// Holds the frame decoder, the metadata accumulation buffer, the body arena
+/// and the codec. Each poll reads from the [`IpcByteSource`] passed to it,
+/// which allows async and blocking readers to decode through the same code.
 ///
 /// The `B` parameter controls frame alignment and must match what the
-/// encoder used. Use `Vec64<u8>` for 64-byte SIMD alignment or `Vec<u8>`
-/// for standard 8-byte Arrow alignment.
-pub struct TableStreamDecoder<B: StreamBuffer = Vec64<u8>> {
-    source: Box<dyn AsyncRead + Unpin + Send>,
+/// encoder used.
+pub(crate) struct TableStreamCore<B: StreamBuffer> {
     decoder: ArrowIPCFrameDecoder<B>,
     /// Small accumulation buffer for frame prefixes and metadata.
     buf: Vec64<u8>,
@@ -86,17 +129,15 @@ pub struct TableStreamDecoder<B: StreamBuffer = Vec64<u8>> {
     arena: StreamArena,
 }
 
-impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
-    /// Construct a table-stream decoder. Pass `None` for the default per-decode
-    /// resource caps applied to every IPC frame consumed from `source`.
-    pub fn new<R: AsyncRead + Unpin + Send + 'static>(
-        source: R,
+impl<B: StreamBuffer + Unpin> TableStreamCore<B> {
+    /// Construct the decode state. Pass `None` for the default per-decode
+    /// resource caps applied to every IPC frame.
+    pub(crate) fn new(
         initial_capacity: usize,
         protocol: IPCMessageProtocol,
         limits: Option<DecodeLimits>,
     ) -> Self {
         Self {
-            source: Box::new(source),
             decoder: ArrowIPCFrameDecoder::new(protocol, limits),
             buf: Vec64::with_capacity(initial_capacity),
             chunk_size: DEFAULT_CHUNK,
@@ -109,7 +150,7 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
     }
 
     /// Return the decoded schema, if available.
-    pub fn schema(&self) -> Option<&[Field]> {
+    pub(crate) fn schema(&self) -> Option<&[Field]> {
         let s = self.codec.schema();
         if s.is_empty() { None } else { Some(s) }
     }
@@ -130,26 +171,23 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
     /// Ensures at least `chunk_size` spare capacity before reading, then
     /// appends whatever the source provides. Returns the number of bytes
     /// read, or sets `eof` if the source is exhausted.
-    fn poll_fill_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+    fn poll_fill_buf<S: IpcByteSource>(&mut self, source: &mut S) -> Poll<io::Result<usize>> {
         let current_len = self.buf.len();
         if self.buf.capacity() - current_len < self.chunk_size {
             self.buf.reserve(self.chunk_size);
         }
 
         let spare = self.buf.spare_capacity_mut();
-        let mut read_buf = ReadBuf::uninit(spare);
 
-        match Pin::new(&mut *self.source).poll_read(cx, &mut read_buf) {
-            Poll::Ready(Ok(())) => {
-                let n = read_buf.filled().len();
+        match source.poll_read_uninit(spare) {
+            Poll::Ready(Ok(n)) => {
                 if n == 0 {
                     self.eof = true;
                 }
-                // SAFETY: `read_buf.filled().len()` is the count of bytes
-                // tokio just initialised within the spare slice above, and
+                // SAFETY: the `IpcByteSource` contract guarantees `n` bytes
+                // were initialised within the spare slice above, and
                 // `current_len + n` cannot exceed `self.buf.capacity()`
-                // because we reserved `chunk_size` headroom and `n` is at
-                // most `spare.len()`.
+                // because `n` is at most `spare.len()`.
                 unsafe { self.buf.set_len(current_len + n) };
                 Poll::Ready(Ok(n))
             }
@@ -162,9 +200,9 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
     }
 
     /// Read bytes from the transport into the arena at the current write position.
-    fn poll_read_body(
+    fn poll_read_body<S: IpcByteSource>(
         &mut self,
-        cx: &mut Context<'_>,
+        source: &mut S,
         filled: &mut usize,
         target: usize,
     ) -> Poll<io::Result<bool>> {
@@ -176,9 +214,8 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
         let n = {
             let spare = self.arena.spare_uninit();
             let read_len = spare.len().min(remaining);
-            let mut read_buf = ReadBuf::uninit(&mut spare[..read_len]);
-            match Pin::new(&mut *self.source).poll_read(cx, &mut read_buf) {
-                Poll::Ready(Ok(())) => read_buf.filled().len(),
+            match source.poll_read_uninit(&mut spare[..read_len]) {
+                Poll::Ready(Ok(n)) => n,
                 Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                 Poll::Pending => return Poll::Pending,
             }
@@ -191,7 +228,8 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
             )));
         }
 
-        // SAFETY: ReadBuf reports exactly the bytes initialised by poll_read.
+        // SAFETY: the `IpcByteSource` contract guarantees the first `n` bytes
+        // of the spare region were initialised.
         unsafe { self.arena.advance(n) };
         *filled += n;
         Poll::Ready(Ok(*filled >= target))
@@ -240,15 +278,13 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
             custom_metadata,
         };
     }
-}
 
-impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
     /// Poll for the next decoded table paired with the single custom_metadata
     /// pair from its record batch message.
     #[allow(clippy::type_complexity)]
-    fn poll_next_keyed(
+    pub(crate) fn poll_next_keyed<S: IpcByteSource>(
         &mut self,
-        cx: &mut Context<'_>,
+        source: &mut S,
     ) -> Poll<Option<io::Result<(Table, Option<Vec<KeyValue>>)>>> {
         let this = self;
 
@@ -263,12 +299,10 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                         this.phase = Phase::Metadata;
                         continue;
                     }
-                    let want = (*remaining).min(1024);
-                    let mut discard = vec![0u8; want];
-                    let mut read_buf = ReadBuf::new(&mut discard);
-                    match Pin::new(&mut *this.source).poll_read(cx, &mut read_buf) {
-                        Poll::Ready(Ok(())) => {
-                            let n = read_buf.filled().len();
+                    let want = (*remaining).min(SKIP_PAD_CHUNK);
+                    let mut discard = [MaybeUninit::<u8>::uninit(); SKIP_PAD_CHUNK];
+                    match source.poll_read_uninit(&mut discard[..want]) {
+                        Poll::Ready(Ok(n)) => {
                             if n == 0 {
                                 this.eof = true;
                             }
@@ -312,7 +346,7 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                         _ => unreachable!(),
                     };
 
-                    match this.poll_read_body(cx, &mut body_filled, body_len) {
+                    match this.poll_read_body(source, &mut body_filled, body_len) {
                         Poll::Ready(Ok(true)) => {
                             // Body complete - create SharedBuffer window from the arena
                             let shared = this.arena.window(body_start, body_len);
@@ -491,7 +525,7 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                                 ))));
                             }
 
-                            match this.poll_fill_buf(cx) {
+                            match this.poll_fill_buf(source) {
                                 Poll::Ready(Ok(_)) => continue,
                                 Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
                                 Poll::Pending => return Poll::Pending,
@@ -501,6 +535,55 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                 }
             }
         }
+    }
+}
+
+/// Direct Arrow IPC decoder with zero-copy record batch decoding.
+///
+/// Yields each batch as an individual SharedBuffer-backed Table. The body
+/// Vec64 is recycled across batches - after the caller drops the previous
+/// Table, the SharedBuffer releases the Vec64 for reuse.
+///
+/// The `B` parameter controls frame alignment and must match what the
+/// encoder used. Use `Vec64<u8>` for 64-byte SIMD alignment or `Vec<u8>`
+/// for standard 8-byte Arrow alignment.
+pub struct TableStreamDecoder<B: StreamBuffer = Vec64<u8>> {
+    source: Box<dyn AsyncRead + Unpin + Send>,
+    core: TableStreamCore<B>,
+}
+
+impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
+    /// Construct a table-stream decoder. Pass `None` for the default per-decode
+    /// resource caps applied to every IPC frame consumed from `source`.
+    pub fn new<R: AsyncRead + Unpin + Send + 'static>(
+        source: R,
+        initial_capacity: usize,
+        protocol: IPCMessageProtocol,
+        limits: Option<DecodeLimits>,
+    ) -> Self {
+        Self {
+            source: Box::new(source),
+            core: TableStreamCore::new(initial_capacity, protocol, limits),
+        }
+    }
+
+    /// Return the decoded schema, if available.
+    pub fn schema(&self) -> Option<&[Field]> {
+        self.core.schema()
+    }
+
+    /// Poll for the next decoded table paired with the single custom_metadata
+    /// pair from its record batch message.
+    #[allow(clippy::type_complexity)]
+    fn poll_next_keyed(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<io::Result<(Table, Option<Vec<KeyValue>>)>>> {
+        let mut source = AsyncByteSource {
+            source: &mut *self.source,
+            cx,
+        };
+        self.core.poll_next_keyed(&mut source)
     }
 
     /// Read the next decoded table paired with the single custom_metadata pair

@@ -64,12 +64,12 @@ impl StdoutTableWriter {
 impl IPCTransportWriter for StdoutTableWriter {
     /// Get the schema used for this writer.
     fn schema(&self) -> &[Field] {
-        &self.sink.schema
+        &self.sink.core.schema
     }
 
     /// Register a dictionary for categorical columns.
     fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
-        self.sink.codec.register_dictionary(dict_id, values);
+        self.sink.core.codec.register_dictionary(dict_id, values);
     }
 
     /// Write a single table and flush.

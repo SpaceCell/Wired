@@ -43,22 +43,21 @@ pub type TableSink<W> = GTableSink<W, Vec<u8>>;
 /// 64 byte aligned Arrow buffers.
 pub type TableSink64<W> = GTableSink<W, Vec64<u8>>;
 
-/// Generic asynchronous Arrow Table sink for Tokio and other async runtimes.
+/// Transport-independent encode state of the Arrow IPC table sinks.
 ///
-/// This wraps any compatible async byte sink (`W: AsyncWrite`) and handles
-/// Arrow IPC protocol (framing, schema, dictionaries, record batches, footers).
+/// Holds the schema, the codec, the pooled encode buffer and the File
+/// protocol frame writer for one IPC session, and returns encoded frames for
+/// the owning sink to write to its destination. The async [`GTableSink`] and
+/// the blocking [`SyncTableSink`] encode through this state and differ only
+/// in how bytes reach the destination.
 ///
-/// It yields whole `Table` objects and is the recommended sink for *Minarrow* data.
-/// Tables it yields are analogous with *Apache Arrow* *`Record Batches`* once
-/// written into the wider ecosystem.
-pub struct GTableSink<W, B>
+/// [`SyncTableSink`]: crate::models::sinks::sync_table_sink::SyncTableSink
+pub(crate) struct TableSinkCore<B>
 where
-    W: AsyncWrite + Unpin + Send + 'static,
     B: StreamBuffer + Unpin + 'static,
 {
     pub(crate) schema: Vec<Field>,
     pub(crate) codec: ArrowIpcCodec<B>,
-    pub(crate) destination: W,
     pub(crate) protocol: IPCMessageProtocol,
     pub(crate) finished: bool,
     pub(crate) frame_buf: Option<B>, // Current frame being written
@@ -69,41 +68,41 @@ where
     pub(crate) file_writer: Option<TableStreamWriter<B>>,
 }
 
-impl<W, B> GTableSink<W, B>
+impl<B> TableSinkCore<B>
 where
-    W: AsyncWrite + Unpin + Send + 'static,
-    B: StreamBuffer + std::fmt::Debug + Unpin + 'static,
+    B: StreamBuffer + Unpin + 'static,
 {
-    /// Create a new generic Arrow Table writer. Pass `None` for
+    /// Create the encode state for one IPC session. Pass `None` for
     /// `compression` to write uncompressed batches; `Some(codec)` compresses
     /// every record-batch body.
-    pub fn new(
-        sink: W,
+    pub(crate) fn new(
         schema: Vec<Field>,
         protocol: IPCMessageProtocol,
         compression: Option<Compression>,
-    ) -> io::Result<Self> {
+    ) -> Self {
         let file_writer = if protocol == IPCMessageProtocol::File {
             Some(TableStreamWriter::new(schema.clone(), protocol, compression))
         } else {
             None
         };
-        Ok(Self {
+        Self {
             codec: ArrowIpcCodec::new(schema.clone(), protocol, compression, None),
             schema,
-            destination: sink,
             protocol,
             finished: false,
             frame_buf: None,
             frame_pos: 0,
             encode_buf: B::with_capacity(0),
             file_writer,
-        })
+        }
     }
 
-    /// Expose a mutable reference to the inner sink.
-    pub fn sink_mut(&mut self) -> &mut W {
-        &mut self.destination
+    /// Register a dictionary with the given id and values.
+    pub(crate) fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
+        self.codec.register_dictionary(dict_id, values.clone());
+        if let Some(writer) = &mut self.file_writer {
+            writer.register_dictionary(dict_id, values);
+        }
     }
 
     /// Encode the table view into the pending frame buffer, attaching
@@ -132,6 +131,93 @@ where
         }
         Ok(())
     }
+
+    /// Return the next encoded frame for the destination, or `None` when no
+    /// frame is waiting.
+    ///
+    /// The pending frame buffer is returned first, followed by the frames
+    /// queued by the File protocol writer.
+    pub(crate) fn next_frame(&mut self) -> Option<B> {
+        if let Some(buf) = self.frame_buf.take() {
+            return Some(buf);
+        }
+        // If no frame buffered, pull next from the file writer's queue.
+        if let Some(writer) = &mut self.file_writer {
+            if let Some(Ok(frame)) = writer.next_frame() {
+                self.frame_pos = 0;
+                return Some(frame);
+            }
+        }
+        None
+    }
+
+    /// Return a fully written frame buffer to the pool for the next encode.
+    pub(crate) fn reclaim(&mut self, buf: B) {
+        self.encode_buf = buf;
+        self.frame_pos = 0;
+    }
+
+    /// Queue the end-of-stream marker or the File footer. Later calls do
+    /// nothing.
+    pub(crate) fn finish(&mut self) -> io::Result<()> {
+        if !self.finished {
+            if let Some(writer) = &mut self.file_writer {
+                // File protocol: writer handles footer + EOS
+                writer.finish()?;
+            } else {
+                // Stream protocol: write EOS into a buffer and queue it
+                let mut eos_buf = B::with_capacity(8);
+                self.codec.finish(&mut eos_buf)?;
+                self.frame_buf = Some(eos_buf);
+                self.frame_pos = 0;
+            }
+            self.finished = true;
+        }
+        Ok(())
+    }
+}
+
+/// Generic asynchronous Arrow Table sink for Tokio and other async runtimes.
+///
+/// This wraps any compatible async byte sink (`W: AsyncWrite`) and handles
+/// Arrow IPC protocol (framing, schema, dictionaries, record batches, footers).
+///
+/// It yields whole `Table` objects and is the recommended sink for *Minarrow* data.
+/// Tables it yields are analogous with *Apache Arrow* *`Record Batches`* once
+/// written into the wider ecosystem.
+pub struct GTableSink<W, B>
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+    B: StreamBuffer + Unpin + 'static,
+{
+    pub(crate) core: TableSinkCore<B>,
+    pub(crate) destination: W,
+}
+
+impl<W, B> GTableSink<W, B>
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+    B: StreamBuffer + std::fmt::Debug + Unpin + 'static,
+{
+    /// Create a new generic Arrow Table writer. Pass `None` for
+    /// `compression` to write uncompressed batches; `Some(codec)` compresses
+    /// every record-batch body.
+    pub fn new(
+        sink: W,
+        schema: Vec<Field>,
+        protocol: IPCMessageProtocol,
+        compression: Option<Compression>,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            core: TableSinkCore::new(schema, protocol, compression),
+            destination: sink,
+        })
+    }
+
+    /// Expose a mutable reference to the inner sink.
+    pub fn sink_mut(&mut self) -> &mut W {
+        &mut self.destination
+    }
 }
 
 impl<W, B> Sink<TableV> for GTableSink<W, B>
@@ -143,36 +229,22 @@ where
 
     /// Admit a new table once the pending frame has reached the sink.
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if self.frame_buf.is_some() {
+        if self.core.frame_buf.is_some() {
             return self.as_mut().poll_flush(cx);
         }
         Poll::Ready(Ok(()))
     }
 
     fn start_send(self: Pin<&mut Self>, view: TableV) -> Result<(), Self::Error> {
-        self.get_mut().encode_frame(view, None)
+        self.get_mut().core.encode_frame(view, None)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         // drain encoder into sink, honouring partial writes
         loop {
-            // If no frame buffered, pull next from the file writer's queue.
-            if self.frame_buf.is_none() {
-                if let Some(writer) = &mut self.file_writer {
-                    if let Some(Ok(frame)) = writer.next_frame() {
-                        self.frame_pos = 0;
-                        self.frame_buf = Some(frame);
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-
             // Attempt to write current frame.
-            if let Some(buf) = self.frame_buf.take() {
-                let remaining = &buf.as_ref()[self.frame_pos..];
+            if let Some(buf) = self.core.next_frame() {
+                let remaining = &buf.as_ref()[self.core.frame_pos..];
                 // Limit chunk size to avoid blocking the async runtime
                 const MAX_WRITE_CHUNK: usize = 1024 * 1024; // 1MB chunks
                 let chunk = if remaining.len() > MAX_WRITE_CHUNK {
@@ -182,20 +254,19 @@ where
                 };
                 match Pin::new(&mut self.destination).poll_write(cx, chunk) {
                     Poll::Pending => {
-                        self.frame_buf = Some(buf);
+                        self.core.frame_buf = Some(buf);
                         return Poll::Pending;
                     }
                     Poll::Ready(Ok(0)) => return Poll::Ready(Err(io::ErrorKind::WriteZero.into())),
                     Poll::Ready(Ok(n)) => {
-                        self.frame_pos += n;
-                        if self.frame_pos < buf.as_ref().len() {
-                            self.frame_buf = Some(buf);
+                        self.core.frame_pos += n;
+                        if self.core.frame_pos < buf.as_ref().len() {
+                            self.core.frame_buf = Some(buf);
                             cx.waker().wake_by_ref();
                             return Poll::Pending;
                         } else {
                             // Frame fully written - reclaim the buffer for reuse
-                            self.encode_buf = buf;
-                            self.frame_pos = 0;
+                            self.core.reclaim(buf);
                         }
                     }
                     Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
@@ -211,19 +282,7 @@ where
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         // Emit EOS / footer
-        if !self.finished {
-            if let Some(writer) = &mut self.file_writer {
-                // File protocol: writer handles footer + EOS
-                writer.finish()?;
-            } else {
-                // Stream protocol: write EOS into a buffer and queue it
-                let mut eos_buf = B::with_capacity(8);
-                self.codec.finish(&mut eos_buf)?;
-                self.frame_buf = Some(eos_buf);
-                self.frame_pos = 0;
-            }
-            self.finished = true;
-        }
+        self.core.finish()?;
 
         // Drain all remaining frames
         match self.as_mut().poll_flush(cx)? {

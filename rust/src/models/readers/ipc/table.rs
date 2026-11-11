@@ -134,7 +134,7 @@ impl<B: StreamBuffer + Unpin + 'static> Stream for TableReader<B> {
 }
 
 /// Concatenate a vector of batches into a single `Table`
-fn combine_batches_to_table(batches: Vec<Table>, name: Option<String>) -> io::Result<Table> {
+pub(crate) fn combine_batches_to_table(batches: Vec<Table>, name: Option<String>) -> io::Result<Table> {
     if batches.is_empty() {
         return Ok(Table::default());
     }
