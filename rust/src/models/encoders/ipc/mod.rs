@@ -15,8 +15,8 @@ pub mod schema;
 /// Record batch encoding with zero intermediate allocations.
 pub mod record_batch;
 
-/// Stream encoder for Arrow tables.
-pub mod table_stream;
+/// Encoder for Arrow tables.
+pub mod table_encoder;
 
 // ---------------------------------------------------------------------------
 // IPC Frame Encoder

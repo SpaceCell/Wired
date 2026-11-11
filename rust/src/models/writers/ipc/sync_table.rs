@@ -17,8 +17,8 @@
 //! - [`TableWriter`] - **async end-to-end writer**. Wraps `TableStreamWriter`
 //!   and drives the queued frames into a `tokio::io::AsyncWrite` sink.
 //! - [`SyncTableWriter`] (this struct) - **sync end-to-end writer**. Wraps
-//!   `TableStreamWriter` and drives the queued frames into a
-//!   `std::io::Write` sink. Use this for one-shot file writes from a sync
+//!   [`SyncTableSink`] over a `std::io::Write` sink, as [`TableWriter`]
+//!   wraps the async table sink. Use this for one-shot file writes from a sync
 //!   caller (e.g. `ChunkedArrowWriter`'s per-batch path) so the caller does
 //!   not have to spin up a tokio runtime to push bytes.
 //!
@@ -28,6 +28,7 @@
 //!
 //! [`TableWriter`]: crate::models::writers::ipc::table::TableWriter
 //! [`TableStreamWriter`]: crate::models::writers::ipc::table_stream::TableStreamWriter
+//! [`SyncTableSink`]: crate::models::sinks::sync_table_sink::SyncTableSink
 
 use std::io;
 
@@ -35,15 +36,15 @@ use minarrow::{Field, Table, TableV, Vec64};
 
 use crate::compression::Compression;
 use crate::enums::IPCMessageProtocol;
+use crate::models::sinks::sync_table_sink::SyncTableSink;
 use crate::models::writers::object_storage::StorageWriter;
-use crate::models::writers::ipc::table_stream::TableStreamWriter;
 use crate::traits::stream_buffer::StreamBuffer;
 use crate::utils::dict_values;
 
 /// Sync end-to-end Arrow Table writer over any `std::io::Write` sink.
 ///
-/// Owns a [`TableStreamWriter`] for frame production and writes each emitted
-/// frame to the sink before returning. Dictionaries can be registered up
+/// Owns a [`SyncTableSink`], which encodes each table and writes its frames
+/// to the sink before returning. Dictionaries can be registered up
 /// front via [`Self::register_dictionary`] or are auto-detected from
 /// categorical columns by [`Self::write_table`].
 pub struct SyncTableWriter<W, B = Vec64<u8>>
@@ -51,9 +52,7 @@ where
     W: io::Write,
     B: StreamBuffer + Unpin + 'static,
 {
-    inner: TableStreamWriter<B>,
-    sink: W,
-    finished: bool,
+    sink: SyncTableSink<W, B>,
 }
 
 impl<W, B> SyncTableWriter<W, B>
@@ -71,15 +70,13 @@ where
         compression: Option<Compression>,
     ) -> Self {
         Self {
-            inner: TableStreamWriter::new(schema, protocol, compression),
-            sink,
-            finished: false,
+            sink: SyncTableSink::new(sink, schema, protocol, compression),
         }
     }
 
     /// Get the schema used for this writer.
     pub fn schema(&self) -> &[Field] {
-        self.inner.schema()
+        self.sink.schema()
     }
 
     /// Register a dictionary for categorical columns.
@@ -87,7 +84,7 @@ where
     /// Must be called before the first `write_table` for any column that
     /// uses dictionary encoding and is not auto-detected from the table.
     pub fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
-        self.inner.register_dictionary(dict_id, values);
+        self.sink.register_dictionary(dict_id, values);
     }
 
     /// Write a single table or table view, auto-registering dictionaries
@@ -97,11 +94,10 @@ where
         let view: TableV = table.into();
         for (col_idx, col) in view.cols.iter().enumerate() {
             if let Some(values) = dict_values(col.as_tuple_ref().0) {
-                self.inner.register_dictionary(col_idx as i64, values);
+                self.sink.register_dictionary(col_idx as i64, values);
             }
         }
-        self.inner.write(view)?;
-        self.drain_frames()
+        self.sink.write_table(view)
     }
 
     /// Write every table from the iterator, then finalise the stream.
@@ -119,30 +115,14 @@ where
     /// footer + closing magic for File protocol, drains any remaining
     /// frames, and flushes the sink. Idempotent.
     pub fn finish(&mut self) -> io::Result<()> {
-        if self.finished {
-            return Ok(());
-        }
-        self.inner.finish()?;
-        self.drain_frames()?;
-        self.sink.flush()?;
-        self.finished = true;
-        Ok(())
+        self.sink.finish()
     }
 
     /// Consume the writer and return the underlying sink. Calls `finish` if
     /// it has not been called.
     pub fn into_inner(mut self) -> io::Result<W> {
         self.finish()?;
-        Ok(self.sink)
-    }
-
-    /// Pull every queued frame from the encoder and write it to the sink.
-    fn drain_frames(&mut self) -> io::Result<()> {
-        while let Some(frame) = self.inner.next_frame() {
-            let buf = frame?;
-            self.sink.write_all(buf.as_ref())?;
-        }
-        Ok(())
+        Ok(self.sink.into_inner())
     }
 }
 

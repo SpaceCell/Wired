@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! # Arrow IPC Table Stream Encoder
+//! # Arrow IPC Table Encoder
 //!
 //! Serialises `Table` values into Arrow IPC metadata and body pairs.
 //! Handles schema, dictionary, and record batch encoding with state
@@ -35,7 +35,7 @@ use crate::utils::align_to;
 /// pairs. Tracks encoding state so schema and dictionaries are emitted
 /// once. Does not handle framing, queuing, or I/O - those responsibilities
 /// belong to the writer layer.
-pub struct TableStreamEncoder<B: StreamBuffer + 'static> {
+pub struct TableEncoder<B: StreamBuffer + 'static> {
     /// Arrow IPC protocol - affects alignment calculations
     pub protocol: IPCMessageProtocol,
     /// Current encoding state
@@ -54,7 +54,7 @@ pub struct TableStreamEncoder<B: StreamBuffer + 'static> {
     _alignment: std::marker::PhantomData<B>,
 }
 
-impl<B: StreamBuffer> TableStreamEncoder<B> {
+impl<B: StreamBuffer> TableEncoder<B> {
     /// Create a new encoder. `None` for `compression` writes uncompressed
     /// batches; `Some(codec)` compresses every record-batch body.
     pub fn new(

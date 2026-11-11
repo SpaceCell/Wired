@@ -15,7 +15,7 @@
 //! (e.g. `Vec<u8>` or `Vec64<u8>`), and both Arrow IPC protocols (File/Stream).
 
 use crate::enums::IPCMessageProtocol;
-use crate::models::decoders::ipc::table_stream_decoder::TableStreamDecoder;
+use crate::models::decoders::ipc::table_decoder::{KeyValue, TableDecodeResult, TableDecoder};
 use crate::traits::stream_buffer::StreamBuffer;
 use futures_core::Stream;
 use futures_util::StreamExt;
@@ -24,15 +24,16 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, ReadBuf};
 
 /// High-level async table reader over an Arrow IPC stream.
 ///
-/// Wraps a [`TableStreamDecoder`] with zero-copy record batch decoding
-/// and exposes convenience methods to pull batches, aggregate into a
-/// `SuperTable`, or concatenate into a single `Table`.
+/// Reads from an `AsyncRead` source into a [`TableDecoder`] with zero-copy
+/// record batch decoding, and exposes convenience methods to pull batches,
+/// aggregate into a `SuperTable`, or concatenate into a single `Table`.
 pub struct TableReader<B: StreamBuffer + Unpin + 'static = Vec<u8>> {
-    inner: TableStreamDecoder<B>,
+    source: Box<dyn AsyncRead + Unpin + Send>,
+    decoder: TableDecoder<B>,
 }
 
 impl<B: StreamBuffer + Unpin + 'static> TableReader<B> {
@@ -49,7 +50,8 @@ impl<B: StreamBuffer + Unpin + 'static> TableReader<B> {
         limits: Option<crate::models::decoders::limits::DecodeLimits>,
     ) -> Self {
         Self {
-            inner: TableStreamDecoder::new(stream, initial_capacity, protocol, limits),
+            source: Box::new(stream),
+            decoder: TableDecoder::new(initial_capacity, protocol, limits),
         }
     }
 
@@ -116,7 +118,7 @@ impl<B: StreamBuffer + Unpin + 'static> TableReader<B> {
 
     /// Return the decoded schema if available after first schema message.
     pub fn schema(&self) -> Option<&[Field]> {
-        self.inner.schema()
+        self.decoder.schema()
     }
 
     /// Read the next `Table` from the stream, or `None` on EOS.
@@ -125,16 +127,65 @@ impl<B: StreamBuffer + Unpin + 'static> TableReader<B> {
     }
 }
 
+impl<B: StreamBuffer + Unpin + 'static> TableReader<B> {
+    /// Poll for the next decoded table paired with the single custom_metadata
+    /// pair from its record batch message.
+    #[allow(clippy::type_complexity)]
+    fn poll_next_keyed(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<io::Result<(Table, Option<Vec<KeyValue>>)>>> {
+        loop {
+            match self.decoder.decode_next() {
+                Ok(TableDecodeResult::Batch(table, custom_metadata)) => {
+                    return Poll::Ready(Some(Ok((table, custom_metadata))));
+                }
+                Ok(TableDecodeResult::EndOfStream) => return Poll::Ready(None),
+                Ok(TableDecodeResult::NeedMore) => {}
+                Err(e) => return Poll::Ready(Some(Err(e))),
+            }
+
+            // Poll the transport for more bytes into the region the decoder
+            // requires next.
+            let mut read_buf = ReadBuf::uninit(self.decoder.spare_uninit());
+            match Pin::new(&mut *self.source).poll_read(cx, &mut read_buf) {
+                Poll::Ready(Ok(())) => {
+                    let n = read_buf.filled().len();
+                    if n == 0 {
+                        self.decoder.end_input();
+                    }
+                    // SAFETY: `read_buf.filled().len()` is the count of bytes
+                    // tokio just initialised within the region above.
+                    unsafe { self.decoder.advance(n) };
+                }
+                Poll::Ready(Err(e)) => {
+                    self.decoder.end_input();
+                    return Poll::Ready(Some(Err(e)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+
+    /// Read the next decoded table paired with the single custom_metadata pair
+    /// from its record batch message.
+    pub async fn read_keyed(&mut self) -> Option<io::Result<(Table, Option<Vec<KeyValue>>)>> {
+        std::future::poll_fn(|cx| self.poll_next_keyed(cx)).await
+    }
+}
+
 impl<B: StreamBuffer + Unpin + 'static> Stream for TableReader<B> {
     type Item = io::Result<Table>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.get_mut().inner).poll_next(cx)
+        self.get_mut()
+            .poll_next_keyed(cx)
+            .map(|opt| opt.map(|res| res.map(|(table, _)| table)))
     }
 }
 
 /// Concatenate a vector of batches into a single `Table`
-fn combine_batches_to_table(batches: Vec<Table>, name: Option<String>) -> io::Result<Table> {
+pub(crate) fn combine_batches_to_table(batches: Vec<Table>, name: Option<String>) -> io::Result<Table> {
     if batches.is_empty() {
         return Ok(Table::default());
     }

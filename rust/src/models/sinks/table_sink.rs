@@ -244,7 +244,7 @@ mod tests {
     use minarrow::Table;
 
     use super::*;
-    use crate::models::decoders::ipc::table_stream_decoder::TableStreamDecoder;
+    use crate::models::readers::ipc::table::TableReader;
     use crate::test_helpers::{int32_col, int64_col};
 
     fn test_table() -> Table {
@@ -260,14 +260,14 @@ mod tests {
     }
 
     async fn decoded_batches(bytes: Vec<u8>) -> usize {
-        let mut decoder = TableStreamDecoder::<Vec64<u8>>::new(
+        let mut reader = TableReader::<Vec64<u8>>::new(
             std::io::Cursor::new(bytes),
             64 * 1024,
             IPCMessageProtocol::Stream,
             None,
         );
         let mut count = 0;
-        while let Some(item) = decoder.read_keyed().await {
+        while let Some(item) = reader.read_keyed().await {
             item.expect("stream decoded cleanly");
             count += 1;
         }

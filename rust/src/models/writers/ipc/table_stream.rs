@@ -10,7 +10,7 @@
 //! into Arrow IPC frames - File or Stream protocol
 //!
 //! ## Overview
-//! - Wraps the generic `GTableStreamEncoder` for frame emission
+//! - Wraps [`TableEncoder`] for frame emission
 //! - For pipes, custom network protocols, or synchronous contexts
 //! - Emits schema, dictionaries, record batches, and end-of-stream/footer
 //! - Frames can be pulled incrementally (`next_frame`) or drained all at once
@@ -45,7 +45,7 @@ use crate::arrow::message::org::apache::arrow::flatbuf as fbm;
 use crate::compression::Compression;
 use crate::enums::{IPCMessageProtocol, WriterState};
 use crate::models::encoders::ipc::schema::{FooterBlockMeta, build_flatbuf_footer};
-use crate::models::encoders::ipc::table_stream::TableStreamEncoder;
+use crate::models::encoders::ipc::table_encoder::TableEncoder;
 use crate::models::encoders::ipc::{IPCFrame, IPCFrameEncoder};
 use crate::traits::frame_encoder::FrameEncoder;
 use crate::traits::stream_buffer::StreamBuffer;
@@ -72,7 +72,7 @@ where
     B: StreamBuffer + Unpin + 'static,
 {
     /// The encoder produces (meta, body) pairs
-    encoder: TableStreamEncoder<B>,
+    encoder: TableEncoder<B>,
     /// Queue of framed IPC output buffers
     out_frames: VecDeque<B>,
     /// True when finish() has been called and all frames emitted
@@ -103,7 +103,7 @@ where
         compression: Option<Compression>,
     ) -> Self {
         Self {
-            encoder: TableStreamEncoder::new(schema, protocol, compression),
+            encoder: TableEncoder::new(schema, protocol, compression),
             out_frames: VecDeque::new(),
             finished: false,
             global_offset: 0,

@@ -4,10 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! # Arrow IPC Table Stream Decoder
+//! # Arrow IPC Table Decoder
 //!
-//! Reads Arrow IPC frames from an `AsyncRead` source with zero-copy record
-//! batch decoding.
+//! Decodes Arrow IPC frames into tables with zero-copy record batch decoding.
 //!
 //! - Uses a two-step read:
 //!     1. A small accumulation buffer for frame headers and metadata
@@ -15,15 +14,20 @@
 //! - Column data is decoded via SharedBuffer mapping without userspace copies.
 //! - Each batch is yielded individually as a SharedBuffer-backed Table.
 //! - The arena is recycled when all previous batch SharedBuffer views are dropped.
+//!
+//! Decoding is synchronous and doesn't perform any IO. Readers own the
+//! transport, read its bytes into the region the decoder exposes, and call
+//! the decoder for the next table.
+//! [`TableReader`](crate::models::readers::ipc::table::TableReader) does this
+//! over an `AsyncRead` source, and
+//! [`SyncTableReader`](crate::models::readers::ipc::sync_table::SyncTableReader)
+//! over a blocking `std::io::Read` source.
 
 use std::io;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::mem::MaybeUninit;
 
-use futures_core::Stream;
 use minarrow::structs::shared_buffer::SharedBuffer;
 use minarrow::*;
-use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::arrow::message::org::apache::arrow::flatbuf as fb;
 use crate::enums::{BatchState, IPCMessageProtocol};
@@ -35,6 +39,9 @@ use crate::models::streams::stream_arena::StreamArena;
 use crate::traits::stream_buffer::StreamBuffer;
 
 const DEFAULT_CHUNK: usize = 64 * 1024;
+
+/// Largest read requested while discarding body padding.
+const SKIP_PAD_CHUNK: usize = 1024;
 
 /// An owned Arrow `custom_metadata` key/value pair decoded from a record
 /// batch message.
@@ -63,17 +70,32 @@ enum Phase {
     SkipPad { remaining: usize },
 }
 
+/// Outcome of one [`TableDecoder::decode_next`] call.
+pub enum TableDecodeResult {
+    /// A decoded record batch with the custom_metadata pairs of its message.
+    Batch(Table, Option<Vec<KeyValue>>),
+    /// More bytes are required before the next frame can be decoded.
+    NeedMore,
+    /// The stream has ended.
+    EndOfStream,
+}
+
 /// Direct Arrow IPC decoder with zero-copy record batch decoding.
 ///
 /// Yields each batch as an individual SharedBuffer-backed Table. The body
 /// Vec64 is recycled across batches - after the caller drops the previous
 /// Table, the SharedBuffer releases the Vec64 for reuse.
 ///
+/// The decoder is synchronous and doesn't perform any IO. A reader calls
+/// [`Self::decode_next`], and on [`TableDecodeResult::NeedMore`] it reads
+/// from its transport into [`Self::spare_uninit`], commits the bytes through
+/// [`Self::advance`], and calls [`Self::decode_next`] again. Record batch
+/// bodies are read from the transport into the arena this way.
+///
 /// The `B` parameter controls frame alignment and must match what the
 /// encoder used. Use `Vec64<u8>` for 64-byte SIMD alignment or `Vec<u8>`
 /// for standard 8-byte Arrow alignment.
-pub struct TableStreamDecoder<B: StreamBuffer = Vec64<u8>> {
-    source: Box<dyn AsyncRead + Unpin + Send>,
+pub struct TableDecoder<B: StreamBuffer = Vec64<u8>> {
     decoder: ArrowIPCFrameDecoder<B>,
     /// Small accumulation buffer for frame prefixes and metadata.
     buf: Vec64<u8>,
@@ -84,19 +106,19 @@ pub struct TableStreamDecoder<B: StreamBuffer = Vec64<u8>> {
     codec: ArrowIpcCodec<B>,
     /// Arena for zero-allocation body reads.
     arena: StreamArena,
+    /// Discard region for body padding reads.
+    discard: [MaybeUninit<u8>; SKIP_PAD_CHUNK],
 }
 
-impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
-    /// Construct a table-stream decoder. Pass `None` for the default per-decode
-    /// resource caps applied to every IPC frame consumed from `source`.
-    pub fn new<R: AsyncRead + Unpin + Send + 'static>(
-        source: R,
+impl<B: StreamBuffer + Unpin> TableDecoder<B> {
+    /// Construct a table decoder. Pass `None` for the default per-decode
+    /// resource caps applied to every IPC frame.
+    pub fn new(
         initial_capacity: usize,
         protocol: IPCMessageProtocol,
         limits: Option<DecodeLimits>,
     ) -> Self {
         Self {
-            source: Box::new(source),
             decoder: ArrowIPCFrameDecoder::new(protocol, limits),
             buf: Vec64::with_capacity(initial_capacity),
             chunk_size: DEFAULT_CHUNK,
@@ -105,6 +127,7 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
             phase: Phase::Metadata,
             codec: ArrowIpcCodec::new(Vec::new(), protocol, None, limits),
             arena: StreamArena::new(),
+            discard: [MaybeUninit::uninit(); SKIP_PAD_CHUNK],
         }
     }
 
@@ -125,76 +148,75 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
         }
     }
 
-    /// Poll the transport for more bytes into the metadata accumulation buffer.
+    /// Get the region for the next transport read.
     ///
-    /// Ensures at least `chunk_size` spare capacity before reading, then
-    /// appends whatever the source provides. Returns the number of bytes
-    /// read, or sets `eof` if the source is exhausted.
-    fn poll_fill_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
-        let current_len = self.buf.len();
-        if self.buf.capacity() - current_len < self.chunk_size {
-            self.buf.reserve(self.chunk_size);
-        }
-
-        let spare = self.buf.spare_capacity_mut();
-        let mut read_buf = ReadBuf::uninit(spare);
-
-        match Pin::new(&mut *self.source).poll_read(cx, &mut read_buf) {
-            Poll::Ready(Ok(())) => {
-                let n = read_buf.filled().len();
-                if n == 0 {
-                    self.eof = true;
+    /// Returns the spare capacity of the metadata accumulation buffer, the
+    /// unfilled part of the current record batch body in the arena, or the
+    /// padding discard region, depending on what the decoder requires next.
+    /// The caller writes into this region, then calls `advance(n)` to commit
+    /// the `n` bytes it initialised. Asynchronous read paths wrap the slice
+    /// with `ReadBuf::uninit`.
+    pub fn spare_uninit(&mut self) -> &mut [MaybeUninit<u8>] {
+        match &self.phase {
+            Phase::Metadata => {
+                // Ensures at least `chunk_size` spare capacity before reading.
+                let current_len = self.buf.len();
+                if self.buf.capacity() - current_len < self.chunk_size {
+                    self.buf.reserve(self.chunk_size);
                 }
-                // SAFETY: `read_buf.filled().len()` is the count of bytes
-                // tokio just initialised within the spare slice above, and
-                // `current_len + n` cannot exceed `self.buf.capacity()`
-                // because we reserved `chunk_size` headroom and `n` is at
-                // most `spare.len()`.
-                unsafe { self.buf.set_len(current_len + n) };
-                Poll::Ready(Ok(n))
+                self.buf.spare_capacity_mut()
             }
-            Poll::Ready(Err(e)) => {
-                self.eof = true;
-                Poll::Ready(Err(e))
+            Phase::Body {
+                body_filled,
+                body_len,
+                ..
+            } => {
+                let remaining = body_len - body_filled;
+                let spare = self.arena.spare_uninit();
+                let read_len = spare.len().min(remaining);
+                &mut spare[..read_len]
             }
-            Poll::Pending => Poll::Pending,
+            Phase::SkipPad { remaining } => {
+                let want = (*remaining).min(SKIP_PAD_CHUNK);
+                &mut self.discard[..want]
+            }
         }
     }
 
-    /// Read bytes from the transport into the arena at the current write position.
-    fn poll_read_body(
-        &mut self,
-        cx: &mut Context<'_>,
-        filled: &mut usize,
-        target: usize,
-    ) -> Poll<io::Result<bool>> {
-        let remaining = target - *filled;
-        if remaining == 0 {
-            return Poll::Ready(Ok(true));
-        }
-
-        let n = {
-            let spare = self.arena.spare_uninit();
-            let read_len = spare.len().min(remaining);
-            let mut read_buf = ReadBuf::uninit(&mut spare[..read_len]);
-            match Pin::new(&mut *self.source).poll_read(cx, &mut read_buf) {
-                Poll::Ready(Ok(())) => read_buf.filled().len(),
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
+    /// Commit the first `n` bytes of the region returned by the preceding
+    /// [`Self::spare_uninit`] call.
+    ///
+    /// # Safety
+    ///
+    /// Every byte in the first `n` elements of that region must have been
+    /// initialised, and `n` must not exceed its length.
+    pub unsafe fn advance(&mut self, n: usize) {
+        match &mut self.phase {
+            Phase::Metadata => {
+                let current_len = self.buf.len();
+                // SAFETY: the caller initialised `n` bytes within the spare
+                // capacity returned by `spare_uninit`, and `current_len + n`
+                // cannot exceed `self.buf.capacity()` because `n` is at most
+                // the length of that region.
+                unsafe { self.buf.set_len(current_len + n) };
             }
-        };
-
-        if n == 0 {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "stream ended during record batch body",
-            )));
+            Phase::Body { body_filled, .. } => {
+                // SAFETY: the caller initialised the first `n` bytes of the
+                // arena's spare region.
+                unsafe { self.arena.advance(n) };
+                *body_filled += n;
+            }
+            Phase::SkipPad { remaining } => *remaining = remaining.saturating_sub(n),
         }
+    }
 
-        // SAFETY: ReadBuf reports exactly the bytes initialised by poll_read.
-        unsafe { self.arena.advance(n) };
-        *filled += n;
-        Poll::Ready(Ok(*filled >= target))
+    /// Mark the input as ended.
+    ///
+    /// Readers call this when the transport reports the end of its data or
+    /// a read error. [`Self::decode_next`] then returns the end of the
+    /// stream, or an error when the stream stops inside a frame.
+    pub fn end_input(&mut self) {
+        self.eof = true;
     }
 
     /// Start a body read phase: copy overread bytes from the metadata
@@ -240,16 +262,13 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
             custom_metadata,
         };
     }
-}
 
-impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
-    /// Poll for the next decoded table paired with the single custom_metadata
-    /// pair from its record batch message.
-    #[allow(clippy::type_complexity)]
-    fn poll_next_keyed(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<io::Result<(Table, Option<Vec<KeyValue>>)>>> {
+    /// Decode the next table from the bytes received so far.
+    ///
+    /// Returns the next record batch paired with the custom_metadata pairs
+    /// from its message, the end of the stream, or
+    /// [`TableDecodeResult::NeedMore`] when the next frame is incomplete.
+    pub fn decode_next(&mut self) -> io::Result<TableDecodeResult> {
         let this = self;
 
         loop {
@@ -263,107 +282,58 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                         this.phase = Phase::Metadata;
                         continue;
                     }
-                    let want = (*remaining).min(1024);
-                    let mut discard = vec![0u8; want];
-                    let mut read_buf = ReadBuf::new(&mut discard);
-                    match Pin::new(&mut *this.source).poll_read(cx, &mut read_buf) {
-                        Poll::Ready(Ok(())) => {
-                            let n = read_buf.filled().len();
-                            if n == 0 {
-                                this.eof = true;
-                            }
-                            *remaining = remaining.saturating_sub(n);
-                            continue;
-                        }
-                        Poll::Ready(Err(e)) => {
-                            this.eof = true;
-                            return Poll::Ready(Some(Err(e)));
-                        }
-                        Poll::Pending => return Poll::Pending,
-                    }
+                    return Ok(TableDecodeResult::NeedMore);
                 }
 
-                Phase::Body { .. } => {
-                    // Take the phase to avoid borrow conflicts with poll_read_body
-                    let phase = std::mem::replace(&mut this.phase, Phase::Metadata);
-                    let (
+                Phase::Body {
+                    body_filled,
+                    body_len,
+                    ..
+                } => {
+                    if *body_filled < *body_len {
+                        if this.eof {
+                            this.phase = Phase::Metadata;
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "stream ended during record batch body",
+                            ));
+                        }
+                        return Ok(TableDecodeResult::NeedMore);
+                    }
+
+                    let Phase::Body {
                         meta_bytes,
                         body_start,
-                        mut body_filled,
                         body_len,
                         body_pad,
                         custom_metadata,
-                    ) = match phase {
-                        Phase::Body {
-                            meta_bytes,
-                            body_start,
-                            body_filled,
-                            body_len,
-                            body_pad,
-                            custom_metadata,
-                        } => (
-                            meta_bytes,
-                            body_start,
-                            body_filled,
-                            body_len,
-                            body_pad,
-                            custom_metadata,
-                        ),
-                        _ => unreachable!(),
+                        ..
+                    } = std::mem::replace(&mut this.phase, Phase::Metadata)
+                    else {
+                        unreachable!()
                     };
 
-                    match this.poll_read_body(cx, &mut body_filled, body_len) {
-                        Poll::Ready(Ok(true)) => {
-                            // Body complete - create SharedBuffer window from the arena
-                            let shared = this.arena.window(body_start, body_len);
-                            this.arena.align();
+                    // Body complete - create SharedBuffer window from the arena
+                    let shared = this.arena.window(body_start, body_len);
+                    this.arena.align();
 
-                            let batch =
-                                match this.codec.decode_frame(&meta_bytes, shared, body_len)? {
-                                    IPCFrameResult::Batch(t) => t,
-                                    _ => {
-                                        return Poll::Ready(Some(Err(io::Error::new(
-                                            io::ErrorKind::InvalidData,
-                                            "expected RecordBatch frame for body",
-                                        ))));
-                                    }
-                                };
+                    let batch = match this.codec.decode_frame(&meta_bytes, shared, body_len)? {
+                        IPCFrameResult::Batch(t) => t,
+                        _ => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected RecordBatch frame for body",
+                            ));
+                        }
+                    };
 
-                            if body_pad > 0 {
-                                this.phase = Phase::SkipPad {
-                                    remaining: body_pad,
-                                };
-                            }
-
-                            return Poll::Ready(Some(Ok((batch, custom_metadata))));
-                        }
-                        Poll::Ready(Ok(false)) => {
-                            this.phase = Phase::Body {
-                                meta_bytes,
-                                body_start,
-                                body_filled,
-                                body_len,
-                                body_pad,
-                                custom_metadata,
-                            };
-                            continue;
-                        }
-                        Poll::Ready(Err(e)) => {
-                            this.eof = true;
-                            return Poll::Ready(Some(Err(e)));
-                        }
-                        Poll::Pending => {
-                            this.phase = Phase::Body {
-                                meta_bytes,
-                                body_start,
-                                body_filled,
-                                body_len,
-                                body_pad,
-                                custom_metadata,
-                            };
-                            return Poll::Pending;
-                        }
+                    if body_pad > 0 {
+                        this.phase = Phase::SkipPad {
+                            remaining: body_pad,
+                        };
                     }
+
+                    return Ok(TableDecodeResult::Batch(batch, custom_metadata));
                 }
 
                 Phase::Metadata => {
@@ -371,7 +341,7 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                         IPCFrameHeader::EndOfStream { consumed } => {
                             this.state = BatchState::Done;
                             this.drain_consumed(consumed);
-                            return Poll::Ready(None);
+                            return Ok(TableDecodeResult::EndOfStream);
                         }
 
                         IPCFrameHeader::Complete { frame, consumed } => {
@@ -432,14 +402,14 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                                 fb::MessageHeader::NONE => {
                                     this.state = BatchState::Done;
                                     this.drain_consumed(consumed);
-                                    return Poll::Ready(None);
+                                    return Ok(TableDecodeResult::EndOfStream);
                                 }
                                 _ => {
                                     this.drain_consumed(consumed);
-                                    return Poll::Ready(Some(Err(io::Error::new(
+                                    return Err(io::Error::new(
                                         io::ErrorKind::InvalidData,
                                         "unexpected message order",
-                                    ))));
+                                    ));
                                 }
                             }
                         }
@@ -451,10 +421,10 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                             body_pad,
                         } => {
                             if !matches!(this.state, BatchState::Ready) {
-                                return Poll::Ready(Some(Err(io::Error::new(
+                                return Err(io::Error::new(
                                     io::ErrorKind::InvalidData,
                                     "unexpected message order",
-                                ))));
+                                ));
                             }
 
                             let meta_bytes = this.buf[message_range].to_vec();
@@ -483,39 +453,18 @@ impl<B: StreamBuffer + Unpin> TableStreamDecoder<B> {
                         IPCFrameHeader::NeedMore => {
                             if this.eof {
                                 if matches!(this.state, BatchState::Done) {
-                                    return Poll::Ready(None);
+                                    return Ok(TableDecodeResult::EndOfStream);
                                 }
-                                return Poll::Ready(Some(Err(io::Error::new(
+                                return Err(io::Error::new(
                                     io::ErrorKind::UnexpectedEof,
                                     "stream ended before Arrow EOS marker",
-                                ))));
+                                ));
                             }
-
-                            match this.poll_fill_buf(cx) {
-                                Poll::Ready(Ok(_)) => continue,
-                                Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
-                                Poll::Pending => return Poll::Pending,
-                            }
+                            return Ok(TableDecodeResult::NeedMore);
                         }
                     }
                 }
             }
         }
-    }
-
-    /// Read the next decoded table paired with the single custom_metadata pair
-    /// from its record batch message.
-    pub async fn read_keyed(&mut self) -> Option<io::Result<(Table, Option<Vec<KeyValue>>)>> {
-        std::future::poll_fn(|cx| self.poll_next_keyed(cx)).await
-    }
-}
-
-impl<B: StreamBuffer + Unpin> Stream for TableStreamDecoder<B> {
-    type Item = io::Result<Table>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.get_mut()
-            .poll_next_keyed(cx)
-            .map(|opt| opt.map(|res| res.map(|(table, _)| table)))
     }
 }
