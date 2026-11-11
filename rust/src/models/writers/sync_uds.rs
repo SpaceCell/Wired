@@ -11,7 +11,7 @@
 //!
 //! Wraps a [`SyncTableWriter`] over a `UnixStream`. The wire format is the
 //! Arrow IPC stream protocol with 64-byte aligned frames, identical to
-//! [`UdsTableWriter`], so either UDS reader receives the tables.
+//! [`UdsTableWriter`], and either UDS reader receives the tables.
 //!
 //! Both peer roles are supported. [`SyncUdsTableWriter::connect`] reaches a
 //! listening socket path, and [`SyncUdsTableWriter::accept`] serves the next

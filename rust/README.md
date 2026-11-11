@@ -45,7 +45,7 @@ Other transports (HTTP/2, QUIC, WebSocket, UDS, files, memory maps) expose the s
 
 ## Capabilities
 
-**Transports:** TCP, Unix domain sockets, HTTP/2, QUIC, WebSocket, WebTransport, standard I/O, `io_uring`.
+**Transports:** TCP, Unix domain sockets, HTTP/2, QUIC, WebSocket, WebTransport, standard I/O, `io_uring`. Unix domain sockets are also available in sync form, with no async runtime.
 
 **Formats:** Arrow IPC (file and stream), CSV, JSON, NDJSON, Parquet, TLV framing, memory maps, chunked datasets.
 
@@ -112,6 +112,33 @@ let writer = TcpTableWriter::connect(
     schema,
     Some(Compression::Zstd),
 ).await?;
+```
+
+**Sync readers and writers**
+
+Sync forms read and write tables from a dedicated thread with no async runtime, which suits high-volume feeds between processes on one host. They decode through the same path as the async readers, apply the same decode limits and use an identical wire format. Sync and async peers therefore interoperate.
+
+| Type | Over |
+|------|------|
+| `SyncTableReader` | Any `std::io::Read` (Arrow IPC stream) |
+| `SyncTableWriter` | Any `std::io::Write` (Arrow IPC stream or file) |
+| `SyncUdsTableReader` | Unix domain socket, `connect` or `accept` |
+| `SyncUdsTableWriter` | Unix domain socket, `connect` or `accept` |
+
+```rust
+use lightstream::models::readers::sync_uds::SyncUdsTableReader;
+use lightstream::models::writers::sync_uds::SyncUdsTableWriter;
+
+// Receiver thread
+let listener = std::os::unix::net::UnixListener::bind("/tmp/feed.sock")?;
+for table in SyncUdsTableReader::accept(&listener, None)? {
+    process(table?);
+}
+
+// Sender thread
+let mut writer = SyncUdsTableWriter::connect("/tmp/feed.sock", schema, None)?;
+writer.write_table(batch_1)?;
+writer.finish()?;
 ```
 
 **Memory-mapped Arrow IPC**
@@ -190,7 +217,7 @@ cargo run --example uds_arrow --features uds
 | `http` | HTTP/2 transport |
 | `quic` | QUIC transport |
 | `websocket` | WebSocket transport |
-| `uds` | Unix domain sockets |
+| `uds` | Unix domain sockets, in async and sync forms |
 | `stdio` | Standard I/O |
 | `webtransport` | WebTransport (experimental) |
 | `mmap` | Memory-mapped Arrow IPC |
