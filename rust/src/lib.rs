@@ -312,6 +312,10 @@ pub mod models {
         #[cfg(feature = "uds")]
         pub mod uds;
 
+        /// Sync UDS table reader over `std::os::unix::net`.
+        #[cfg(feature = "uds")]
+        pub mod sync_uds;
+
         /// Stdin table reader
         #[cfg(feature = "stdio")]
         pub mod stdio;
@@ -412,6 +416,10 @@ pub mod models {
         /// UDS table writer
         #[cfg(feature = "uds")]
         pub mod uds;
+
+        /// Sync UDS table writer over `std::os::unix::net`.
+        #[cfg(feature = "uds")]
+        pub mod sync_uds;
 
         /// Stdout table writer
         #[cfg(feature = "stdio")]

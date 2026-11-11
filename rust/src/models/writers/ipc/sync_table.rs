@@ -129,6 +129,11 @@ where
         Ok(())
     }
 
+    /// Expose a mutable reference to the inner sink.
+    pub fn sink_mut(&mut self) -> &mut W {
+        &mut self.sink
+    }
+
     /// Consume the writer and return the underlying sink. Calls `finish` if
     /// it has not been called.
     pub fn into_inner(mut self) -> io::Result<W> {
