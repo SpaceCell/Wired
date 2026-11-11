@@ -2,6 +2,18 @@
 
 Notable changes are recorded from 0.5.0 onward.
 
+## Unreleased
+
+### Enhancements
+- Added `SyncTableReader`, a blocking Arrow IPC stream reader over any `std::io::Read` and the read-side counterpart of `SyncTableWriter`. It decodes through the same path as `TableReader`, applies the same `DecodeLimits` and yields tables on 64-byte aligned buffers.
+- Added `SyncUdsTableReader` and `SyncUdsTableWriter` behind the `uds` feature, for Unix domain sockets on a dedicated thread with no async runtime. Both provide `connect`, `accept` and `from_stream`, and use the same wire format as `UdsTableReader` and `UdsTableWriter`, which allows sync and async peers to interoperate.
+- `SyncTableWriter` encodes Stream protocol batches into one reused buffer, as the async table sink does.
+- Added `SyncTableWriter::sink_mut`.
+
+### Changed
+- `SyncTableWriter` under the Stream protocol writes the end-of-stream marker on `finish` when no table was written, as the async writers do.
+- `SyncTableWriter::write_table` returns an error after `finish`.
+
 ## v0.8.0 27 Oct 2026
 
 ### Enhancements
