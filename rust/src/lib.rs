@@ -233,6 +233,9 @@ pub mod models {
             /// Streamed IPC table reader
             pub mod table;
 
+            /// Sync IPC table reader over `std::io::Read`.
+            pub mod sync_table;
+
             /// Row windowing over decoded record batches
             pub(crate) mod window;
         }
