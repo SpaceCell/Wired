@@ -16,8 +16,9 @@
 //!   `next_frame` and is responsible for getting bytes onto the wire.
 //! - [`TableWriter`] - **async end-to-end writer**. Wraps `TableStreamWriter`
 //!   and drives the queued frames into a `tokio::io::AsyncWrite` sink.
-//! - [`SyncTableWriter`] (this struct) - **sync end-to-end writer**. Wraps
-//!   `TableStreamWriter` and drives the queued frames into a
+//! - [`SyncTableWriter`] (this struct) - **sync end-to-end writer**. Encodes
+//!   Stream protocol batches into a pooled buffer, as the async table sink
+//!   does, and drives File protocol frames from a `TableStreamWriter`, into a
 //!   `std::io::Write` sink. Use this for one-shot file writes from a sync
 //!   caller (e.g. `ChunkedArrowWriter`'s per-batch path) so the caller does
 //!   not have to spin up a tokio runtime to push bytes.
@@ -35,6 +36,7 @@ use minarrow::{Field, Table, TableV, Vec64};
 
 use crate::compression::Compression;
 use crate::enums::IPCMessageProtocol;
+use crate::models::codecs::ipc::ArrowIpcCodec;
 use crate::models::writers::object_storage::StorageWriter;
 use crate::models::writers::ipc::table_stream::TableStreamWriter;
 use crate::traits::stream_buffer::StreamBuffer;
@@ -42,16 +44,26 @@ use crate::utils::dict_values;
 
 /// Sync end-to-end Arrow Table writer over any `std::io::Write` sink.
 ///
-/// Owns a [`TableStreamWriter`] for frame production and writes each emitted
-/// frame to the sink before returning. Dictionaries can be registered up
-/// front via [`Self::register_dictionary`] or are auto-detected from
-/// categorical columns by [`Self::write_table`].
+/// Encodes each table and writes its frames to the sink before returning.
+/// Dictionaries can be registered up front via [`Self::register_dictionary`]
+/// or are auto-detected from categorical columns by [`Self::write_table`].
+///
+/// The encode paths match [`GTableSink`], which keeps the wire bytes
+/// identical to the async writers. The Stream protocol encodes every batch
+/// into one pooled buffer through [`ArrowIpcCodec`]. The File protocol routes
+/// through a [`TableStreamWriter`], which tracks the footer blocks.
+///
+/// [`GTableSink`]: crate::models::sinks::table_sink::GTableSink
 pub struct SyncTableWriter<W, B = Vec64<u8>>
 where
     W: io::Write,
     B: StreamBuffer + Unpin + 'static,
 {
-    inner: TableStreamWriter<B>,
+    codec: ArrowIpcCodec<B>,
+    /// Pooled encode buffer reused across Stream protocol writes.
+    encode_buf: B,
+    /// Frame-by-frame writer for File protocol with footer tracking
+    file_writer: Option<TableStreamWriter<B>>,
     sink: W,
     finished: bool,
 }
@@ -70,8 +82,15 @@ where
         protocol: IPCMessageProtocol,
         compression: Option<Compression>,
     ) -> Self {
+        let file_writer = if protocol == IPCMessageProtocol::File {
+            Some(TableStreamWriter::new(schema.clone(), protocol, compression))
+        } else {
+            None
+        };
         Self {
-            inner: TableStreamWriter::new(schema, protocol, compression),
+            codec: ArrowIpcCodec::new(schema, protocol, compression, None),
+            encode_buf: B::with_capacity(0),
+            file_writer,
             sink,
             finished: false,
         }
@@ -79,7 +98,7 @@ where
 
     /// Get the schema used for this writer.
     pub fn schema(&self) -> &[Field] {
-        self.inner.schema()
+        &self.codec.encoder.schema
     }
 
     /// Register a dictionary for categorical columns.
@@ -87,21 +106,36 @@ where
     /// Must be called before the first `write_table` for any column that
     /// uses dictionary encoding and is not auto-detected from the table.
     pub fn register_dictionary(&mut self, dict_id: i64, values: Vec<String>) {
-        self.inner.register_dictionary(dict_id, values);
+        match &mut self.file_writer {
+            Some(writer) => writer.register_dictionary(dict_id, values),
+            None => self.codec.register_dictionary(dict_id, values),
+        }
     }
 
     /// Write a single table or table view, auto-registering dictionaries
     /// from any categorical columns present, then drain encoded frames to
     /// the sink.
     pub fn write_table(&mut self, table: impl Into<TableV>) -> io::Result<()> {
+        if self.finished {
+            return Err(io::Error::other("writer already finished"));
+        }
         let view: TableV = table.into();
         for (col_idx, col) in view.cols.iter().enumerate() {
             if let Some(values) = dict_values(col.as_tuple_ref().0) {
-                self.inner.register_dictionary(col_idx as i64, values);
+                self.register_dictionary(col_idx as i64, values);
             }
         }
-        self.inner.write(view)?;
-        self.drain_frames()
+        if let Some(writer) = &mut self.file_writer {
+            writer.write(view)?;
+            return self.drain_frames();
+        }
+        let len = self.encode_buf.len();
+        if len > 0 {
+            self.encode_buf.drain(0..len);
+        }
+        self.codec
+            .encode_stream_batch(&view, &mut self.encode_buf, 0, None)?;
+        self.sink.write_all(self.encode_buf.as_ref())
     }
 
     /// Write every table from the iterator, then finalise the stream.
@@ -122,8 +156,14 @@ where
         if self.finished {
             return Ok(());
         }
-        self.inner.finish()?;
-        self.drain_frames()?;
+        if let Some(writer) = &mut self.file_writer {
+            writer.finish()?;
+            self.drain_frames()?;
+        } else {
+            let mut eos_buf = B::with_capacity(8);
+            self.codec.finish(&mut eos_buf)?;
+            self.sink.write_all(eos_buf.as_ref())?;
+        }
         self.sink.flush()?;
         self.finished = true;
         Ok(())
@@ -141,11 +181,14 @@ where
         Ok(self.sink)
     }
 
-    /// Pull every queued frame from the encoder and write it to the sink.
+    /// Pull every queued File protocol frame from the encoder and write it
+    /// to the sink.
     fn drain_frames(&mut self) -> io::Result<()> {
-        while let Some(frame) = self.inner.next_frame() {
-            let buf = frame?;
-            self.sink.write_all(buf.as_ref())?;
+        if let Some(writer) = &mut self.file_writer {
+            while let Some(frame) = writer.next_frame() {
+                let buf = frame?;
+                self.sink.write_all(buf.as_ref())?;
+            }
         }
         Ok(())
     }
