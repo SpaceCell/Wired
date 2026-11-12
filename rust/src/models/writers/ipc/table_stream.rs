@@ -190,8 +190,7 @@ where
                 self.out_frames.push_back(footer_frame);
             }
             IPCMessageProtocol::Stream => {
-                // Emit the EOS marker, including for a stream with no
-                // tables, which readers otherwise reject as truncated.
+                // Emit the EOS marker
                 let frame = IPCFrame {
                     meta: &[],
                     body: &[],
@@ -450,7 +449,7 @@ mod tests {
         let mut writer = TableStreamWriter::<Vec64<u8>>::new(schema, IPCMessageProtocol::Stream, None);
         assert!(writer.next_frame().is_none());
         writer.finish().unwrap();
-        // A stream with no tables still ends with the EOS marker.
+        // Streams with no tables still end with the EOS marker.
         let eos = writer.next_frame().unwrap().unwrap();
         assert_eq!(eos.as_ref(), &[0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0][..]);
         assert!(writer.next_frame().is_none());
