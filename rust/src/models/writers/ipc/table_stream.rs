@@ -190,20 +190,19 @@ where
                 self.out_frames.push_back(footer_frame);
             }
             IPCMessageProtocol::Stream => {
-                // Only emit EOS marker if we actually wrote something
-                if self.encoder.state != WriterState::Fresh {
-                    let frame = IPCFrame {
-                        meta: &[],
-                        body: &[],
-                        protocol: IPCMessageProtocol::Stream,
-                        is_first: false,
-                        is_last: true,
-                        footer_bytes: None,
-                    };
-                    let (eos_frame, _) =
-                        IPCFrameEncoder::encode::<B>(&mut self.global_offset, &frame)?;
-                    self.out_frames.push_back(eos_frame);
-                }
+                // Emit the EOS marker, including for a stream with no
+                // tables, which readers otherwise reject as truncated.
+                let frame = IPCFrame {
+                    meta: &[],
+                    body: &[],
+                    protocol: IPCMessageProtocol::Stream,
+                    is_first: false,
+                    is_last: true,
+                    footer_bytes: None,
+                };
+                let (eos_frame, _) =
+                    IPCFrameEncoder::encode::<B>(&mut self.global_offset, &frame)?;
+                self.out_frames.push_back(eos_frame);
             }
         }
         self.encoder.state = WriterState::Closed;
@@ -383,6 +382,10 @@ mod tests {
         assert_eq!(writer.schema(), &schema[..]);
         assert!(!writer.is_finished());
         writer.finish().unwrap();
+        // The EOS marker is queued, and the writer is finished once the
+        // caller has drained it.
+        assert!(!writer.is_finished());
+        assert_eq!(writer.drain_all_frames().len(), 1);
         assert!(writer.is_finished());
     }
 
@@ -447,6 +450,9 @@ mod tests {
         let mut writer = TableStreamWriter::<Vec64<u8>>::new(schema, IPCMessageProtocol::Stream, None);
         assert!(writer.next_frame().is_none());
         writer.finish().unwrap();
+        // A stream with no tables still ends with the EOS marker.
+        let eos = writer.next_frame().unwrap().unwrap();
+        assert_eq!(eos.as_ref(), &[0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0][..]);
         assert!(writer.next_frame().is_none());
     }
 

@@ -330,6 +330,34 @@ mod tests {
     }
 
     #[test]
+    fn empty_stream_ends_with_the_end_of_stream_marker() {
+        use crate::models::readers::ipc::sync_table::SyncTableReader;
+
+        let table = Table::new("t", Some(vec![fa_i32!["n", 10, 20, 30]]));
+        let schema: Vec<Field> = table.cols.iter().map(|c| (*c.field).clone()).collect();
+
+        let mut buf: Vec<u8> = Vec::new();
+        let mut writer =
+            SyncTableWriter::<_, Vec64<u8>>::new(&mut buf, schema, IPCMessageProtocol::Stream, None);
+        writer.finish().unwrap();
+        drop(writer);
+
+        // The continuation marker followed by a zero metadata length.
+        assert_eq!(buf, [0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0]);
+
+        // The stream reads back as complete, with zero tables.
+        let tables = SyncTableReader::<_, Vec64<u8>>::new(
+            std::io::Cursor::new(buf),
+            1024,
+            IPCMessageProtocol::Stream,
+            None,
+        )
+        .read_all_tables()
+        .unwrap();
+        assert!(tables.is_empty());
+    }
+
+    #[test]
     fn finish_is_idempotent() {
         let file = NamedTempFile::new().unwrap();
         let mut writer = SyncTableWriter::<_, Vec64<u8>>::new(
