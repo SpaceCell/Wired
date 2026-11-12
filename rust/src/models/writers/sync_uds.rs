@@ -29,7 +29,6 @@ use std::path::Path;
 use minarrow::{Field, Table, TableV, Vec64};
 
 use crate::compression::Compression;
-use crate::enums::IPCMessageProtocol;
 use crate::models::sinks::sync_table_sink::SyncTableSink;
 
 /// Sync Arrow IPC writer over a Unix domain socket connection.
@@ -78,7 +77,7 @@ impl SyncUdsTableWriter {
         schema: Vec<Field>,
         compression: Option<Compression>,
     ) -> Self {
-        let sink = SyncTableSink::new(stream, schema, IPCMessageProtocol::Stream, compression);
+        let sink = SyncTableSink::new(stream, schema, compression);
         Self { sink }
     }
 
