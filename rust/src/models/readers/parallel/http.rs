@@ -34,8 +34,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::enums::{BufferChunkSize, IPCMessageProtocol};
-use crate::models::decoders::ipc::table_stream_decoder::TableStreamDecoder;
 use crate::models::decoders::limits::DecodeLimits;
+use crate::models::readers::ipc::table::TableReader;
 use crate::models::streams::http::{H2RecvRead, HttpByteStream};
 use crate::traits::parallel_transport_reader::{ParallelTransportReader, SortBehaviour};
 use crate::traits::parallel_transport_writer::SEQ_ID_META_KEY;
@@ -107,7 +107,7 @@ impl HttpParallelTableReader {
             respond
                 .send_response(response, true)
                 .map_err(io::Error::other)?;
-            let mut decoder = TableStreamDecoder::<Vec64<u8>>::new(
+            let mut reader = TableReader::<Vec64<u8>>::new(
                 HttpByteStream::new(H2RecvRead::new(request.into_body()), BufferChunkSize::Http),
                 BufferChunkSize::Http.chunk_size(),
                 IPCMessageProtocol::Stream,
@@ -116,7 +116,7 @@ impl HttpParallelTableReader {
             let (tx, rx) = mpsc::channel(STREAM_CHANNEL_DEPTH);
             let task = tokio::spawn(async move {
                 loop {
-                    match decoder.read_keyed().await {
+                    match reader.read_keyed().await {
                         Some(Ok((table, kv))) => {
                             let seq = if sort == SortBehaviour::None {
                                 None

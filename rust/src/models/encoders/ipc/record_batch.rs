@@ -33,7 +33,7 @@ use crate::arrow::message::org::apache::arrow::flatbuf as fbm;
 use crate::compression::compress;
 use crate::enums::{IPCMessageProtocol, WriterState};
 use crate::models::encoders::ipc::schema::build_flatbuf_recordbatch;
-use crate::models::encoders::ipc::table_stream::TableStreamEncoder;
+use crate::models::encoders::ipc::table_encoder::TableEncoder;
 use crate::models::encoders::ipc::{IPCFrame, IPCFrameEncoder};
 use crate::traits::frame_encoder::FrameEncoder;
 use crate::traits::stream_buffer::StreamBuffer;
@@ -504,7 +504,7 @@ pub(crate) fn compute_body_layout<'a, B: StreamBuffer>(
 ///
 /// Returns the number of bytes appended to `out`.
 pub(crate) fn encode_record_batch<B: StreamBuffer + Unpin>(
-    encoder: &mut TableStreamEncoder<B>,
+    encoder: &mut TableEncoder<B>,
     view: &TableV,
     out: &mut B,
     base_offset: usize,

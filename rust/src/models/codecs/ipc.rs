@@ -26,7 +26,7 @@ use crate::enums::IPCMessageProtocol;
 use crate::models::decoders::ipc::{decode_ipc_frame, decode_ipc_payload};
 use crate::models::decoders::limits::DecodeLimits;
 use crate::models::encoders::ipc::record_batch::encode_record_batch;
-use crate::models::encoders::ipc::table_stream::TableStreamEncoder;
+use crate::models::encoders::ipc::table_encoder::TableEncoder;
 use crate::traits::decoder::Decoder;
 use crate::traits::encoder::Encoder;
 use crate::traits::stream_buffer::StreamBuffer;
@@ -46,7 +46,7 @@ pub use crate::models::frames::ipc_message::IPCFrameResult;
 /// the Vec64 backing is reclaimed.
 pub struct ArrowIpcCodec<B: StreamBuffer> {
     /// Persistent IPC streaming encoder.
-    pub(crate) encoder: TableStreamEncoder<B>,
+    pub(crate) encoder: TableEncoder<B>,
     /// Decoded schema fields learned from the first payload.
     fields: Vec<Field>,
     /// Accumulated dictionaries across payloads.
@@ -70,7 +70,7 @@ impl<B: StreamBuffer + Unpin> ArrowIpcCodec<B> {
         limits: Option<DecodeLimits>,
     ) -> Self {
         Self {
-            encoder: TableStreamEncoder::new(schema, protocol, compression),
+            encoder: TableEncoder::new(schema, protocol, compression),
             fields: Vec::new(),
             dicts: HashMap::new(),
             shared_cache: None,

@@ -2,6 +2,22 @@
 
 Notable changes are recorded from 0.5.0 onward.
 
+## Unreleased
+
+### Enhancements
+
+- Added `SyncTableReader`, a blocking Arrow IPC stream reader for `std::io::Read` sources. It uses the same decoding implementation and `DecodeLimits` as `TableReader` and returns tables.
+- Added `SyncUdsTableReader` and `SyncUdsTableWriter` under the `uds` feature for persistent, high-volume feeds over Unix domain sockets. They run on dedicated threads without an async runtime. Both provide `connect`, `accept` and `from_stream` and share the wire format used by `UdsTableReader` and `UdsTableWriter`, allowing synchronous and asynchronous peers to interoperate.
+- Added `SyncTableSink`, a blocking Arrow IPC table sink for `std::io::Write` destinations and the synchronous counterpart to `GTableSink`. It encodes Stream protocol batches using a reusable buffer. Both `SyncTableWriter` and `SyncUdsTableWriter` write through this sink.
+
+### Breaking Changes
+
+- Renamed `TableStreamDecoder` to `TableDecoder`. Decoding is now synchronous, with readers responsible for I/O. `TableDecoder::new` no longer accepts a source. Readers fill `spare_uninit`, commit bytes with `advance` and call `decode_next`, which returns `TableDecodeResult`.
+- Moved the `Stream` implementation and `read_keyed` from the decoder to `TableReader`, which owns the `AsyncRead` source.
+- Renamed `TableStreamEncoder` to `TableEncoder`.
+- Renamed `models::decoders::ipc::table_stream_decoder` to `models::decoders::ipc::table_decoder`.
+- Renamed `models::encoders::ipc::table_stream` to `models::encoders::ipc::table_encoder`.
+
 ## v0.8.0 27 Oct 2026
 
 ### Enhancements

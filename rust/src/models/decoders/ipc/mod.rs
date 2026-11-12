@@ -12,8 +12,8 @@
 /// FlatBuffer parser for record batches.
 pub mod parser;
 
-/// Streaming table decoder with zero-copy record batch decoding.
-pub mod table_stream_decoder;
+/// Table decoder with zero-copy record batch decoding.
+pub mod table_decoder;
 
 // ---------------------------------------------------------------------------
 // IPC Frame Decoder

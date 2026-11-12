@@ -128,6 +128,9 @@ pub mod models {
         /// Arrow IPC sink - Stream/File protocols
         pub mod table_sink;
 
+        /// Sync Arrow IPC sink over `std::io::Write`
+        pub mod sync_table_sink;
+
         /// TLV sink for simple type-length-value framing
         pub mod tlv_sink;
     }
@@ -233,6 +236,9 @@ pub mod models {
             /// Streamed IPC table reader
             pub mod table;
 
+            /// Sync IPC table reader over `std::io::Read`.
+            pub mod sync_table;
+
             /// Row windowing over decoded record batches
             pub(crate) mod window;
         }
@@ -308,6 +314,10 @@ pub mod models {
         /// UDS table reader
         #[cfg(feature = "uds")]
         pub mod uds;
+
+        /// Sync UDS table reader over `std::os::unix::net`.
+        #[cfg(feature = "uds")]
+        pub mod sync_uds;
 
         /// Stdin table reader
         #[cfg(feature = "stdio")]
@@ -409,6 +419,10 @@ pub mod models {
         /// UDS table writer
         #[cfg(feature = "uds")]
         pub mod uds;
+
+        /// Sync UDS table writer over `std::os::unix::net`.
+        #[cfg(feature = "uds")]
+        pub mod sync_uds;
 
         /// Stdout table writer
         #[cfg(feature = "stdio")]

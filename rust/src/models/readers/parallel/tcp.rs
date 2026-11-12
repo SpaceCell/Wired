@@ -31,8 +31,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::enums::{BufferChunkSize, IPCMessageProtocol};
-use crate::models::decoders::ipc::table_stream_decoder::TableStreamDecoder;
 use crate::models::decoders::limits::DecodeLimits;
+use crate::models::readers::ipc::table::TableReader;
 use crate::traits::parallel_transport_reader::{ParallelTransportReader, SortBehaviour};
 use crate::traits::parallel_transport_writer::SEQ_ID_META_KEY;
 
@@ -74,7 +74,7 @@ impl TcpParallelTableReader {
         let mut tasks = Vec::with_capacity(stream_count);
         for _ in 0..stream_count {
             let (tcp, _peer) = listener.accept().await?;
-            let mut decoder = TableStreamDecoder::<Vec64<u8>>::new(
+            let mut reader = TableReader::<Vec64<u8>>::new(
                 tcp,
                 BufferChunkSize::Http.chunk_size(),
                 IPCMessageProtocol::Stream,
@@ -83,7 +83,7 @@ impl TcpParallelTableReader {
             let (tx, rx) = mpsc::channel(STREAM_CHANNEL_DEPTH);
             let task = tokio::spawn(async move {
                 loop {
-                    match decoder.read_keyed().await {
+                    match reader.read_keyed().await {
                         Some(Ok((table, kv))) => {
                             let seq = if sort == SortBehaviour::None {
                                 None
