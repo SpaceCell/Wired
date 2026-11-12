@@ -18,6 +18,10 @@ Notable changes are recorded from 0.5.0 onward.
 - Renamed `models::decoders::ipc::table_stream_decoder` to `models::decoders::ipc::table_decoder`.
 - Renamed `models::encoders::ipc::table_stream` to `models::encoders::ipc::table_encoder`.
 
+### Fixed
+
+- `TableStreamWriter::finish` now writes the Stream protocol end-of-stream marker when no tables have been written. Empty streams previously didn't produce any bytes, which `TableReader` rejected as truncated.
+
 ## v0.8.0 27 Oct 2026
 
 ### Enhancements
