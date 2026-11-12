@@ -20,7 +20,7 @@ Notable changes are recorded from 0.5.0 onward.
 
 ### Fixed
 
-- `TableStreamWriter::finish` now writes the Stream protocol end-of-stream marker when no tables have been written. `SyncTableWriter` and `write_tables_to_stream` therefore end an empty stream with the marker, as the asynchronous writers do. An empty stream previously produced no bytes, which `TableReader` rejected as truncated. After `finish` on an empty stream, `TableStreamWriter::is_finished` returns `true` once the marker frame has been drained.
+- `TableStreamWriter::finish` now writes the Stream protocol end-of-stream marker when no tables have been written. Empty streams previously didn't produce any bytes, which `TableReader` rejected as truncated.
 
 ## v0.8.0 27 Oct 2026
 
