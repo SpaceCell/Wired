@@ -6,37 +6,36 @@
 
 //! # WebSocket frame decoder
 //!
-//! Read-side WebSocket protocol handling over bytes already read from a
-//! transport, shared by the async and blocking WebSocket readers.
+//! WebSocket protocol decoding shared by asynchronous and blocking readers.
 //!
-//! ## Context
+//! [`WsFrameDecoder`] processes bytes supplied by transport readers. It
+//! parses frame headers, validates payload lengths and frame types, unmasks
+//! payloads, generates pong responses, recognises close frames and assembles
+//! fragmented messages. Pong responses follow the connection's client or
+//! server role.
 //!
-//! WebSocket connections interleave data frames with ping, pong and close
-//! control frames. [`WsFrameDecoder`] holds the whole read-side protocol. It
-//! accumulates frame headers, validates payload lengths, accepts or rejects
-//! data frames, unmasks payloads, answers pings with pongs in the
-//! connection's role, recognises close frames and, for message reading,
-//! joins fragments into messages.
+//! ## Transport integration
 //!
-//! Decoding is synchronous and doesn't perform any IO. The decoder decides
-//! where the next transport bytes go: into its own header or control
-//! region, or into the front of the caller's payload buffer, which keeps the
-//! payload path free of intermediate copies. Readers own the transport, read
-//! into the region the decoder returns, commit the count and write the pong
-//! frames the decoder produces.
-//! [`WsRead`](crate::models::streams::websocket::WsRead) does this over an
-//! `AsyncRead` source, and
-//! [`SyncWsRead`](crate::models::streams::sync_websocket::SyncWsRead) over a
+//! Decoding is synchronous. Readers handle transport I/O using buffer regions
+//! supplied by the decoder. Header and control bytes go into internal buffers.
+//! Payload bytes go directly into the caller's buffer to avoid intermediate
+//! copies.
+//!
+//! Readers commit the number of bytes read and write any pong frames produced
+//! by the decoder.
+//! [`WsRead`](crate::models::streams::websocket::WsRead) uses an `AsyncRead`
+//! source.
+//! [`SyncWsRead`](crate::models::streams::sync_websocket::SyncWsRead) uses a
 //! blocking `std::io::Read` source.
 //!
-//! ## Decoding forms
+//! ## Decoding modes
 //!
-//! - [`WsFrameDecoder::decode_next`] reads the connection as a byte stream of
-//!   binary payloads, as the table readers require. Binary and continuation
-//!   frames are accepted in any order, and text frames are rejected.
-//! - [`WsFrameDecoder::decode_next_message`] reads whole text and binary
-//!   messages, with the continuation rules of RFC 6455, and reports the end of
-//!   each message with its opcode.
+//! - [`WsFrameDecoder::decode_next`] exposes binary payloads as a byte stream
+//!   for table readers. It accepts binary and continuation frames in any
+//!   order and rejects text frames.
+//! - [`WsFrameDecoder::decode_next_message`] assembles complete text and
+//!   binary messages according to the continuation rules in RFC 6455.
+//!   It reports message boundaries and the corresponding opcodes.
 
 use std::io;
 use std::mem::MaybeUninit;
@@ -106,24 +105,22 @@ pub enum WsDecodeResult {
     Closed,
 }
 
-/// Synchronous WebSocket frame decoder that doesn't own a transport.
+/// Synchronous WebSocket frame decoder for bytes supplied by transport readers.
 ///
-/// Parses frame headers in a fixed buffer and directs data frame payloads
-/// into the caller's buffer. Ping, pong and close frames are handled within
-/// the decoder, with pong responses produced for the reader to write. This
-/// matches standard WebSocket library behaviour.
+/// Parses frame headers in a fixed buffer and writes data frame payloads
+/// directly into the caller's buffer. Handles ping, pong and close frames,
+/// producing pong responses for readers to write.
 ///
 /// ## Behaviour
 ///
-/// - Control frames that are fragmented or exceed 125 payload bytes are
-///   rejected with `io::ErrorKind::InvalidData` before any payload is read.
-/// - Reserved opcodes are rejected with `io::ErrorKind::InvalidData`.
-/// - Malformed frame headers return `io::ErrorKind::InvalidData` without
-///   closing the decoder. Every other rejection closes it.
-/// - Pong responses from a client-role decoder are masked, as RFC 6455
-///   requires of every client-to-server frame.
-/// - Once closed, the decoder returns [`WsDecodeResult::Closed`] from every
-///   later decode call.
+/// - Rejects fragmented control frames and control payloads exceeding
+///   125 bytes with `io::ErrorKind::InvalidData` before reading payload data.
+/// - Rejects reserved opcodes with `io::ErrorKind::InvalidData`.
+/// - Returns `io::ErrorKind::InvalidData` for malformed frame headers and
+///   leaves the decoder open. All other rejections close the decoder.
+/// - Masks pong responses in the client role, as required by RFC 6455 for
+///   client-to-server frames.
+/// - Returns [`WsDecodeResult::Closed`] on all decode calls after closure.
 pub struct WsFrameDecoder {
     state: WsReadState,
     header_buf: [MaybeUninit<u8>; MAX_HEADER_LEN],
