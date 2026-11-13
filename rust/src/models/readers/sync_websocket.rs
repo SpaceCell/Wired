@@ -6,23 +6,23 @@
 
 //! # Synchronous WebSocket table reader
 //!
-//! Blocking counterpart of [`WebSocketTableReader`] over `std::net`, for
-//! readers that run on a dedicated thread without an async runtime.
+//! Blocking counterpart to [`WebSocketTableReader`] using `std::net`.
+//! Supports readers running on dedicated threads without an async runtime.
 //!
-//! Wraps a [`SyncTableReader`] over a [`SyncWsRead`]. Decoding shares the
-//! decode path of the async reader, with the same [`DecodeLimits`], and
-//! accepts the same wire format from either WebSocket writer.
+//! Combines [`SyncTableReader`] with [`SyncWsRead`], using the same decoding
+//! implementation and [`DecodeLimits`] as the asynchronous reader. Accepts
+//! the wire format produced by both synchronous and asynchronous WebSocket
+//! table writers.
 //!
-//! ## Security
+//! ## Transport security
 //!
-//! The sync transport is plaintext `ws://`. For `wss://` endpoints, see the
-//! async `WebSocketTableReader::connect_tls`, available with the `tls`
-//! feature.
+//! Supports plaintext `ws://` connections. For `wss://` endpoints, use
+//! `WebSocketTableReader::connect_tls` with the `tls` feature.
 //!
 //! ## Continuous streaming
 //!
-//! `SyncWebSocketTableReader` implements `Iterator<Item = io::Result<Table>>`,
-//! which suits infinite or long-lived streams:
+//! `SyncWebSocketTableReader` implements `Iterator<Item = io::Result<Table>>`
+//! for processing tables from finite or continuous streams.
 //!
 //! ```rust,no_run
 //! # fn run() -> std::io::Result<()> {
@@ -30,7 +30,7 @@
 //! let reader = SyncWebSocketTableReader::connect("ws://127.0.0.1:9000", None)?;
 //! for result in reader {
 //!     let table = result?;
-//!     // process each batch as it arrives
+//!     // Process each batch as it arrives.
 //! }
 //! # Ok(()) }
 //! ```
