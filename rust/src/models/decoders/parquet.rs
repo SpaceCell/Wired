@@ -13,7 +13,7 @@
 //! used internally by higher-level Table or Array readers.
 
 use crate::error::IoError;
-use minarrow::Vec64;
+use minarrow::{Vec64, vec64};
 use std::io::Read;
 
 // ************************ Primitive decoders ************************
@@ -180,6 +180,11 @@ pub fn decode_dictionary_indices_rle(buf: &[u8], len: usize) -> Result<Vec64<u32
         return Err(IoError::Format("empty dictionary index stream".to_owned()));
     }
     let bit_width = buf[0];
+    // A bit width of 0 encodes a dictionary with one entry, and every index
+    // is 0.
+    if bit_width == 0 {
+        return Ok(vec64![0; len]);
+    }
     if !(1..=32).contains(&bit_width) {
         return Err(IoError::Format(format!("invalid bit width {bit_width}")));
     }
@@ -387,12 +392,25 @@ mod tests {
             decode_dictionary_indices_rle(&[], 1),
             Err(IoError::Format(_))
         ));
-        // bad bit_width
-        let buf = &[0u8];
+        // A bit width above 32 is outside the format.
+        let buf = &[33u8, 6, 0];
         assert!(matches!(
             decode_dictionary_indices_rle(buf, 1),
             Err(IoError::Format(_))
         ));
+    }
+
+    #[test]
+    fn test_decode_dictionary_rle_zero_bit_width() {
+        // bit_width=0 for a one-entry dictionary, header=(3<<1)=6 with a
+        // zero-byte value: every index is 0.
+        let buf = &[0u8, 6];
+        let out = decode_dictionary_indices_rle(buf, 3).unwrap();
+        assert_eq!(out.0, vec![0, 0, 0]);
+
+        // The bit width byte on its own decodes to index 0 for every value.
+        let out = decode_dictionary_indices_rle(&[0u8], 2).unwrap();
+        assert_eq!(out.0, vec![0, 0]);
     }
 
     #[test]
