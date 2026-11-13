@@ -4,16 +4,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Sync WebSocket roundtrip integration tests.
+//! Synchronous WebSocket round-trip integration tests.
 //!
-//! Exercises `SyncWebSocketTableReader` and `SyncWebSocketTableWriter` against
-//! each other and against the async `WebSocketTableReader` and
-//! `WebSocketTableWriter`, in both peer roles, with and without compression.
-//! Also exercises text and binary message reads through
-//! `SyncWebSocketTransport` and `SyncWsRead` without the table reader, against
-//! the sync `tungstenite` peer. Sync peers run on their own threads with no
-//! async runtime. Async peers run on a current-thread runtime on their own
-//! threads.
+//! Tests `SyncWebSocketTableReader` and `SyncWebSocketTableWriter` together
+//! and with their asynchronous counterparts, `WebSocketTableReader` and
+//! `WebSocketTableWriter`. Covers client and server roles, with and without
+//! compression.
+//!
+//! Tests text and binary message reads through `SyncWebSocketTransport` and
+//! `SyncWsRead` against synchronous `tungstenite` peers.
+//!
+//! Synchronous peers run on dedicated threads without an async runtime.
+//! Asynchronous peers run on dedicated threads with current-thread runtimes.
 
 #![cfg(feature = "websocket")]
 
