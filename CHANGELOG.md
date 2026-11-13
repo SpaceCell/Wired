@@ -6,9 +6,12 @@ Notable changes are recorded from 0.5.0 onward.
 
 ### Enhancements
 
-- Added `SyncTableReader`, a blocking Arrow IPC stream reader for `std::io::Read` sources. It uses the same decoding implementation and `DecodeLimits` as `TableReader` and returns tables.
-- Added `SyncUdsTableReader` and `SyncUdsTableWriter` under the `uds` feature for persistent, high-volume feeds over Unix domain sockets. They run on dedicated threads without an async runtime. Both provide `connect`, `accept` and `from_stream` and share the wire format used by `UdsTableReader` and `UdsTableWriter`, allowing synchronous and asynchronous peers to interoperate.
-- Added `SyncTableSink`, a blocking Arrow IPC table sink for `std::io::Write` destinations and the synchronous counterpart to `GTableSink`. It encodes Stream protocol batches using a reusable buffer. Both `SyncTableWriter` and `SyncUdsTableWriter` write through this sink.
+- Added `SyncTableReader`, a blocking Arrow IPC reader for `std::io::Read` sources, using the same decoder and `DecodeLimits` as `TableReader`.
+- Added `SyncUdsTableReader` and `SyncUdsTableWriter` under the `uds` feature for blocking Unix domain socket feeds. These are compatible with asynchronous peers due to the process boundary.
+- Added `SyncTableSink`, a blocking Arrow IPC sink for `std::io::Write` destinations, with reusable encoding buffers.
+- Added `SyncWebSocketTableReader` and `SyncWebSocketTableWriter` under the `websocket` feature for blocking plaintext WebSocket feeds, with the same wire format, `DecodeLimits` and `Compression` options as the async types.
+- Added `SyncWebSocketTransport`, `SyncWsRead` and `SyncWsWrite` for blocking WebSocket I/O, including complete text and binary message reads.
+- Added `WsFrameDecoder` and `WsFrameEncoder` for shared protocol handling across synchronous and asynchronous adapters. Existing `WsRead` and `WsWrite` APIs and behaviour are unchanged.
 
 ### Breaking Changes
 
