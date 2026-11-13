@@ -8,6 +8,7 @@ Notable changes are recorded from 0.5.0 onward.
 
 - Added `SyncTableReader`, a blocking Arrow IPC stream reader for `std::io::Read` sources. It uses the same decoding implementation and `DecodeLimits` as `TableReader` and returns tables.
 - Added `SyncUdsTableReader` and `SyncUdsTableWriter` under the `uds` feature for persistent, high-volume feeds over Unix domain sockets. They run on dedicated threads without an async runtime. Both provide `connect`, `accept` and `from_stream` and share the wire format used by `UdsTableReader` and `UdsTableWriter`, allowing synchronous and asynchronous peers to interoperate.
+- Added file reads over `http://` and `https://` paths behind the `https` feature. File readers accept these URLs in place of paths and read them through the object storage HTTP backend.
 - Added `SyncTableSink`, a blocking Arrow IPC table sink for `std::io::Write` destinations and the synchronous counterpart to `GTableSink`. It encodes Stream protocol batches using a reusable buffer. Both `SyncTableWriter` and `SyncUdsTableWriter` write through this sink.
 
 ### Breaking Changes

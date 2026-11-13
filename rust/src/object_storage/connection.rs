@@ -32,7 +32,7 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
-#[cfg(any(feature = "aws", feature = "gcp", feature = "azure"))]
+#[cfg(any(feature = "aws", feature = "gcp", feature = "azure", feature = "https"))]
 use object_store::{ClientConfigKey, ClientOptions};
 use object_store::{ObjectStore, ObjectStoreScheme};
 use tokio::runtime::Handle;
@@ -57,7 +57,7 @@ const MAX_CONCURRENT_PARTS_KEY: &str = "max_concurrent_parts";
 
 /// URL schemes routed to object storage. Every other path is a local path.
 const OBJECT_SCHEMES: &[&str] = &[
-    "s3", "s3a", "gs", "az", "adl", "azure", "abfs", "abfss", "memory",
+    "s3", "s3a", "gs", "az", "adl", "azure", "abfs", "abfss", "memory", "http", "https",
 ];
 
 /// Options registered per URL prefix, as `(prefix, options)`.
@@ -168,7 +168,16 @@ pub(crate) fn resolve(url: &str) -> io::Result<ObjectLocation> {
             format!("invalid object storage URL '{url}': {e}"),
         )
     })?;
-    let (scheme, path) = ObjectStoreScheme::parse(&parsed).map_err(|e| io_error(e.into()))?;
+    // `http` and `https` URLs resolve to the HTTP store for every host,
+    // including cloud storage hosts that `ObjectStoreScheme::parse` assigns
+    // to their cloud backends.
+    let (scheme, path) = match parsed.scheme() {
+        "http" | "https" => (
+            ObjectStoreScheme::Http,
+            ObjectPath::from_url_path(parsed.path()).map_err(|e| io_error(e.into()))?,
+        ),
+        _ => ObjectStoreScheme::parse(&parsed).map_err(|e| io_error(e.into()))?,
+    };
     let (prefix, options) = registered_options(url);
     let (part_size, max_concurrent_parts) = upload_settings(&options)?;
     if scheme == ObjectStoreScheme::Memory {
@@ -267,9 +276,11 @@ fn registered_options(url: &str) -> (String, Vec<(String, String)>) {
 ///
 /// The HTTP client starts with no limit on total request time. The
 /// backend's environment variables and then `options` are applied over that
-/// default, and either can set a `timeout`.
+/// default, and either can set a `timeout`. The HTTP store doesn't read any
+/// environment variables, and allows plaintext connections for `http` URLs
+/// only.
 #[cfg_attr(
-    not(any(feature = "aws", feature = "gcp", feature = "azure")),
+    not(any(feature = "aws", feature = "gcp", feature = "azure", feature = "https")),
     allow(unused_variables)
 )]
 fn build(
@@ -335,10 +346,27 @@ fn build(
             let store = builder.build().map_err(io_error)?;
             Ok(Arc::new(store))
         }
+        #[cfg(feature = "https")]
+        ObjectStoreScheme::Http => {
+            use object_store::http::HttpBuilder;
+            let mut builder = HttpBuilder::new()
+                .with_url(&url[..Position::BeforePath])
+                .with_client_options(
+                    ClientOptions::new()
+                        .with_timeout_disabled()
+                        .with_allow_http(url.scheme() == "http"),
+                );
+            for (key, value) in options {
+                let key: ClientConfigKey = key.parse().map_err(io_error)?;
+                builder = builder.with_config(key, value);
+            }
+            let store = builder.build().map_err(io_error)?;
+            Ok(Arc::new(store))
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!(
-                "object storage URL '{url}' requires the lightstream `aws`, `gcp` or `azure` feature for its scheme"
+                "object storage URL '{url}' requires the lightstream `aws`, `gcp`, `azure` or `https` feature for its scheme"
             ),
         )),
     }
@@ -422,7 +450,8 @@ mod tests {
         assert!(object_url(Path::new("/tmp/data/a.csv")).is_none());
         assert!(object_url(Path::new("relative/a.csv")).is_none());
         assert!(object_url(Path::new("C:\\data\\a.csv")).is_none());
-        assert!(object_url(Path::new("https://host/a.csv")).is_none());
+        assert!(object_url(Path::new("https://host/a.csv")).is_some());
+        assert!(object_url(Path::new("http://host/a.csv")).is_some());
     }
 
     #[test]
@@ -469,6 +498,27 @@ mod tests {
     fn a_backend_without_its_feature_is_unsupported() {
         let err = resolve("s3://bucket/key").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(feature = "https"))]
+    #[test]
+    fn http_urls_without_their_feature_are_unsupported() {
+        let err = resolve("https://host/a.csv").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(feature = "https")]
+    #[test]
+    fn https_urls_on_cloud_storage_hosts_resolve_to_the_http_store() {
+        for url in [
+            "https://bucket.s3.amazonaws.com/data/a.parquet",
+            "https://account.blob.core.windows.net/container/a.parquet",
+        ] {
+            let location = resolve(url).unwrap();
+            assert_eq!(location.store.to_string(), "HttpStore", "{url}");
+        }
+        let location = resolve("https://bucket.s3.amazonaws.com/data/a.parquet").unwrap();
+        assert_eq!(location.path.as_ref(), "data/a.parquet");
     }
 
     #[cfg(feature = "azure")]

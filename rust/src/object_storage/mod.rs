@@ -34,9 +34,15 @@
 //! | `s3://bucket/path`, `s3a://` | Amazon S3 and S3-compatible stores | `aws` |
 //! | `gs://bucket/path` | Google Cloud Storage | `gcp` |
 //! | `az://container/path`, `abfs://`, `abfss://`, `adl://`, `azure://` | Azure Blob Storage | `azure` |
+//! | `http://host/path`, `https://host/path` | HTTP and HTTPS servers | `https` |
 //!
 //! Paths without one of these schemes, including Windows drive paths, are
 //! local file paths as before.
+//!
+//! The HTTP backend is for reads, and resolves every `http` and `https` URL,
+//! including URLs on cloud storage hosts, without credentials. Query strings
+//! are not sent to the server, and directory listing works only against
+//! WebDAV servers. `https` URLs are not redirected to plaintext `http`.
 //!
 //! ## Credentials
 //! Each backend reads its standard environment variables (`AWS_*`,
