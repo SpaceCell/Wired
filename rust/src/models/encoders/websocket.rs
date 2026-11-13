@@ -6,40 +6,39 @@
 
 //! # WebSocket frame encoder
 //!
-//! Write-side WebSocket protocol handling, shared by the async and blocking
-//! WebSocket writers.
+//! WebSocket protocol encoding shared by asynchronous and blocking writers.
 //!
-//! ## Context
+//! [`WsFrameEncoder`] tracks the connection role, frame header, payload source
+//! and write progress. Client frames are masked using a buffer reused across
+//! frames. Server payloads are written directly from the caller's slice.
+//! RFC 6455 requires masking for client-to-server frames and prohibits it
+//! for server-to-client frames.
 //!
-//! RFC 6455 requires every client-to-server frame to be masked, and every
-//! server-to-client frame to be unmasked. [`WsFrameEncoder`] holds the
-//! connection's role and the frame being written: its header, its payload
-//! source and the progress through both. Payloads from the connecting peer
-//! are masked into a buffer reused across frames. Payloads from the
-//! accepting peer are written from the caller's slice without a copy.
+//! ## Transport integration
 //!
-//! Encoding is synchronous and doesn't perform any IO. Writers own the
-//! transport. They begin a frame, write the bytes [`WsFrameEncoder::pending`]
-//! returns, and commit each written count until the frame is complete.
-//! [`WsWrite`](crate::models::streams::websocket::WsWrite) does this over an
-//! `AsyncWrite` destination, and
-//! [`SyncWsWrite`](crate::models::streams::sync_websocket::SyncWsWrite) over
-//! a blocking `std::io::Write` destination.
+//! Encoding is synchronous. Writers handle transport I/O. They begin frames,
+//! write the bytes returned by [`WsFrameEncoder::pending`] and commit the
+//! number of bytes written until each frame is complete.
+//!
+//! [`WsWrite`](crate::models::streams::websocket::WsWrite) uses an `AsyncWrite`
+//! destination.
+//! [`SyncWsWrite`](crate::models::streams::sync_websocket::SyncWsWrite) uses a
+//! blocking `std::io::Write` destination.
 
 use crate::models::frames::websocket::{self, MAX_HEADER_LEN, fresh_mask_key};
 
-/// Synchronous WebSocket frame encoder that doesn't own a transport.
+/// Synchronous WebSocket frame encoder for transport writers.
 ///
-/// Frames each payload as one binary frame, and writes the normal-closure
-/// close frame. The connecting peer masks every frame with a fresh key.
+/// Encodes payloads as individual binary frames and produces close frames
+/// with the normal closure status. Client frames use fresh masking keys.
 ///
 /// ## Behaviour
 ///
-/// - [`Self::pending`] returns the unwritten header bytes first, then the
-///   unwritten payload bytes.
-/// - The frame is complete once every header and payload byte has been
+/// - [`Self::pending`] returns unwritten header bytes before unwritten
+///   payload bytes.
+/// - Frames are complete after all header and payload bytes have been
 ///   committed through [`Self::advance`]. New encoders report complete.
-/// - Beginning a frame replaces the frame in progress.
+/// - Starting new frames replaces any frames in progress.
 pub struct WsFrameEncoder {
     /// Client role: frames are masked per RFC 6455.
     client: bool,
