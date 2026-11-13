@@ -383,9 +383,6 @@ fn bench_uds(
 }
 
 /// Sync UDS throughput through `SyncUdsTableWriter` and `SyncUdsTableReader`.
-///
-/// The writer and reader each run on their own thread with no async runtime,
-/// matching the deployment of sync sources and sinks.
 #[cfg(feature = "uds")]
 fn bench_uds_sync(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
@@ -523,9 +520,6 @@ fn bench_websocket(
 
 /// Sync WebSocket throughput through `SyncWebSocketTableWriter` and
 /// `SyncWebSocketTableReader`.
-///
-/// The writer and reader each run on their own thread without an async runtime,
-/// matching the deployment of sync sources and sinks.
 #[cfg(feature = "websocket")]
 fn bench_websocket_sync(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
