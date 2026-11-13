@@ -7,7 +7,7 @@ Notable changes are recorded from 0.5.0 onward.
 ### Enhancements
 
 - Added `SyncTableReader`, a blocking Arrow IPC reader for `std::io::Read` sources, using the same decoder and `DecodeLimits` as `TableReader`.
-- Added `SyncUdsTableReader` and `SyncUdsTableWriter` under the `uds` feature for blocking Unix domain socket feeds, compatible with asynchronous peers.
+- Added `SyncUdsTableReader` and `SyncUdsTableWriter` under the `uds` feature for blocking Unix domain socket feeds. These are compatible with asynchronous peers due to the process boundary.
 - Added `SyncTableSink`, a blocking Arrow IPC sink for `std::io::Write` destinations, with reusable encoding buffers.
 - Added `SyncWebSocketTableReader` and `SyncWebSocketTableWriter` under the `websocket` feature for blocking plaintext WebSocket feeds, with the same wire format, `DecodeLimits` and `Compression` options as the async types.
 - Added `SyncWebSocketTransport`, `SyncWsRead` and `SyncWsWrite` for blocking WebSocket I/O, including complete text and binary message reads.
