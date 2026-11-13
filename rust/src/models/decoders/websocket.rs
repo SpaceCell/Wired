@@ -48,6 +48,10 @@ use crate::models::frames::websocket::{
 /// Largest control frame payload permitted by RFC 6455.
 const MAX_CONTROL_PAYLOAD: usize = 125;
 
+/// Largest pong frame: a 2-byte header, a 4-byte masking key for the
+/// connecting peer and the echoed control payload.
+const MAX_PONG_LEN: usize = 6 + MAX_CONTROL_PAYLOAD;
+
 /// Read state machine for WebSocket frame parsing.
 enum WsReadState {
     /// Accumulating the WS frame header (2-14 bytes).
@@ -69,7 +73,7 @@ enum WsReadState {
     /// Consuming a valid control payload that needs no application action.
     IgnoringControl { remaining: usize },
     /// Sending a pong response. Transitions to Header when done.
-    SendingPong { buf: Vec<u8>, written: usize },
+    SendingPong { len: usize, written: usize },
     /// Connection closed.
     Closed,
 }
@@ -126,6 +130,8 @@ pub struct WsFrameDecoder {
     header_buf: [MaybeUninit<u8>; MAX_HEADER_LEN],
     /// Ping payload, or the discard region for ignored control payloads.
     control_buf: [MaybeUninit<u8>; MAX_CONTROL_PAYLOAD],
+    /// Pending pong frame, written in place for each ping.
+    pong_buf: [u8; MAX_PONG_LEN],
     /// Client pong responses are masked per RFC 6455.
     client: bool,
     /// Opcode of the message in progress, for message decoding.
@@ -144,6 +150,7 @@ impl WsFrameDecoder {
             // initialised bytes, which keeps them initialised throughout.
             header_buf: [MaybeUninit::new(0); MAX_HEADER_LEN],
             control_buf: [MaybeUninit::new(0); MAX_CONTROL_PAYLOAD],
+            pong_buf: [0u8; MAX_PONG_LEN],
             client: false,
             message: None,
             message_fin: false,
@@ -282,7 +289,7 @@ impl WsFrameDecoder {
     #[inline]
     pub fn pong(&self) -> &[u8] {
         match &self.state {
-            WsReadState::SendingPong { buf, written } => &buf[*written..],
+            WsReadState::SendingPong { len, written } => &self.pong_buf[*written..*len],
             _ => &[],
         }
     }
@@ -438,7 +445,7 @@ impl WsFrameDecoder {
                             } else {
                                 // Empty ping - send empty pong immediately
                                 self.state = WsReadState::SendingPong {
-                                    buf: build_pong(self.client, &[]),
+                                    len: build_pong(self.client, &[], &mut self.pong_buf),
                                     written: 0,
                                 };
                             }
@@ -473,7 +480,7 @@ impl WsFrameDecoder {
                     // SAFETY: the decoder's own regions are always initialised.
                     let payload = unsafe { assume_init(&self.control_buf[..len]) };
                     self.state = WsReadState::SendingPong {
-                        buf: build_pong(self.client, payload),
+                        len: build_pong(self.client, payload, &mut self.pong_buf),
                         written: 0,
                     };
                 }
@@ -485,8 +492,8 @@ impl WsFrameDecoder {
                     self.state = WsReadState::Header { filled: 0 };
                 }
 
-                WsReadState::SendingPong { buf, written } => {
-                    if *written < buf.len() {
+                WsReadState::SendingPong { len, written } => {
+                    if *written < *len {
                         return Ok(Step::Pong);
                     }
                     self.state = WsReadState::Header { filled: 0 };
@@ -560,16 +567,14 @@ fn checked_payload_len(header: WsHeader) -> io::Result<usize> {
     Ok(payload_len)
 }
 
-/// Build the pong frame for `payload` according to the connection role.
-fn build_pong(client: bool, payload: &[u8]) -> Vec<u8> {
-    let mut pong = vec![0u8; 6 + payload.len()];
-    let n = if client {
-        websocket::write_masked_pong_frame(&mut pong, payload, fresh_mask_key())
+/// Build the pong frame for `payload` according to the connection role into
+/// `pong`, and return its length.
+fn build_pong(client: bool, payload: &[u8], pong: &mut [u8; MAX_PONG_LEN]) -> usize {
+    if client {
+        websocket::write_masked_pong_frame(pong, payload, fresh_mask_key())
     } else {
-        websocket::write_pong_frame(&mut pong, payload)
-    };
-    pong.truncate(n);
-    pong
+        websocket::write_pong_frame(pong, payload)
+    }
 }
 
 #[cfg(test)]
@@ -740,6 +745,29 @@ mod tests {
         assert_eq!(&pong[..2], &[0x8A, 0x82]);
         let key = [pong[2], pong[3], pong[4], pong[5]];
         assert_eq!([pong[6] ^ key[0], pong[7] ^ key[1]], *b"hi");
+    }
+
+    /// Pings with the largest control payload are answered in full in both
+    /// roles, and consecutive pings each get their own pong.
+    #[test]
+    fn largest_pings_are_answered_in_both_roles() {
+        let payload: Vec<u8> = (0..MAX_CONTROL_PAYLOAD as u8).collect();
+        let mut wire = vec![0x89, MAX_CONTROL_PAYLOAD as u8];
+        wire.extend_from_slice(&payload);
+        wire.extend_from_slice(&[0x89, 2, b'h', b'i']);
+
+        let pongs = feed(&mut WsFrameDecoder::new(), Form::Bytes, &wire, 64, 64).pongs;
+        assert_eq!(&pongs[..2], &[0x8A, MAX_CONTROL_PAYLOAD as u8]);
+        assert_eq!(&pongs[2..2 + MAX_CONTROL_PAYLOAD], &payload[..]);
+        assert_eq!(&pongs[2 + MAX_CONTROL_PAYLOAD..], &[0x8A, 2, b'h', b'i']);
+
+        let pongs = feed(&mut WsFrameDecoder::new_client(), Form::Bytes, &wire, 64, 64).pongs;
+        assert_eq!(pongs.len(), MAX_PONG_LEN + 8);
+        assert_eq!(&pongs[..2], &[0x8A, 0x80 | MAX_CONTROL_PAYLOAD as u8]);
+        let key = [pongs[2], pongs[3], pongs[4], pongs[5]];
+        let echoed: Vec<u8> =
+            pongs[6..MAX_PONG_LEN].iter().enumerate().map(|(i, b)| b ^ key[i % 4]).collect();
+        assert_eq!(echoed, payload);
     }
 
     #[test]
