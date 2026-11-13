@@ -47,7 +47,7 @@ use crate::models::transports::sync_websocket::SyncWebSocketTransport;
 /// Write half of [`SyncWebSocketTableWriter`]. Boxing the underlying
 /// `std::io::Write` lets every constructor return the same struct type for
 /// different write halves.
-type SyncWsBoxedWrite = Box<dyn Write + Send + 'static>;
+type WsSyncWrite = Box<dyn Write + Send + 'static>;
 
 /// Sync Arrow IPC writer over a WebSocket connection.
 ///
@@ -55,7 +55,7 @@ type SyncWsBoxedWrite = Box<dyn Write + Send + 'static>;
 /// `Vec64<u8>` 64-byte SIMD aligned encoding. Writes block the calling thread
 /// until the socket accepts the bytes.
 pub struct SyncWebSocketTableWriter {
-    sink: SyncTableSink<SyncWsWrite<SyncWsBoxedWrite>, Vec64<u8>>,
+    sink: SyncTableSink<SyncWsWrite<WsSyncWrite>, Vec64<u8>>,
 }
 
 impl SyncWebSocketTableWriter {
@@ -72,7 +72,7 @@ impl SyncWebSocketTableWriter {
         compression: Option<Compression>,
     ) -> io::Result<Self> {
         let (_read_half, write_half) = SyncWebSocketTransport::connect(url)?;
-        let boxed: SyncWsBoxedWrite = Box::new(write_half);
+        let boxed: WsSyncWrite = Box::new(write_half);
         let (_shared, ws_write) = SyncWsWrite::new_client(boxed);
         let sink = SyncTableSink::new(ws_write, schema, compression);
         Ok(Self { sink })
@@ -109,7 +109,7 @@ impl SyncWebSocketTableWriter {
         R: Read + Send + 'static,
         W: Write + Send + 'static,
     {
-        let boxed: SyncWsBoxedWrite = Box::new(write_half);
+        let boxed: WsSyncWrite = Box::new(write_half);
         let (_shared, ws_write) = SyncWsWrite::new(boxed);
         let sink = SyncTableSink::new(ws_write, schema, compression);
         Self { sink }

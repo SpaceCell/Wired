@@ -64,7 +64,13 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> WsRead<R, W> {
     /// The `writer` is the shared write half used for sending pong
     /// responses to pings. The WebSocket handshake must already be complete.
     pub fn new(inner: R, writer: Arc<Mutex<W>>) -> Self {
-        Self::with_decoder(inner, writer, WsFrameDecoder::new())
+        Self {
+            inner,
+            writer,
+            decoder: WsFrameDecoder::new(),
+            arena: StreamArena::new(),
+            chunk_size: 64 * 1024,
+        }
     }
 
     /// Wrap a raw TCP read half as a client-side WebSocket reader.
@@ -72,16 +78,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> WsRead<R, W> {
     /// Identical to [`WsRead::new`] except pong responses are masked,
     /// as RFC 6455 requires of every client-to-server frame.
     pub fn new_client(inner: R, writer: Arc<Mutex<W>>) -> Self {
-        Self::with_decoder(inner, writer, WsFrameDecoder::new_client())
-    }
-
-    fn with_decoder(inner: R, writer: Arc<Mutex<W>>, decoder: WsFrameDecoder) -> Self {
         Self {
-            inner,
-            writer,
-            decoder,
-            arena: StreamArena::new(),
-            chunk_size: 64 * 1024,
+            decoder: WsFrameDecoder::new_client(),
+            ..Self::new(inner, writer)
         }
     }
 }

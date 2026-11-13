@@ -71,9 +71,8 @@ impl<R: Read, W: Write> SyncWsRead<R, W> {
     /// as RFC 6455 requires of every client-to-server frame.
     pub fn new_client(inner: R, writer: Arc<Mutex<W>>) -> Self {
         Self {
-            inner,
-            writer,
             decoder: WsFrameDecoder::new_client(),
+            ..Self::new(inner, writer)
         }
     }
 
@@ -213,23 +212,21 @@ impl<W: Write> SyncWsWrite<W> {
     /// responses, and the adapter for application data. The WebSocket
     /// handshake must already be complete.
     pub fn new(inner: W) -> (Arc<Mutex<W>>, Self) {
-        Self::with_encoder(inner, WsFrameEncoder::new())
+        let shared = Arc::new(Mutex::new(inner));
+        let writer = Self {
+            inner: Arc::clone(&shared),
+            encoder: WsFrameEncoder::new(),
+            closed: false,
+        };
+        (shared, writer)
     }
 
     /// Create a client-side WebSocket write adapter from a raw TCP
     /// write half. Every frame is masked with a fresh key, as RFC 6455
     /// requires of client-to-server traffic.
     pub fn new_client(inner: W) -> (Arc<Mutex<W>>, Self) {
-        Self::with_encoder(inner, WsFrameEncoder::new_client())
-    }
-
-    fn with_encoder(inner: W, encoder: WsFrameEncoder) -> (Arc<Mutex<W>>, Self) {
-        let shared = Arc::new(Mutex::new(inner));
-        let writer = Self {
-            inner: Arc::clone(&shared),
-            encoder,
-            closed: false,
-        };
+        let (shared, mut writer) = Self::new(inner);
+        writer.encoder = WsFrameEncoder::new_client();
         (shared, writer)
     }
 
@@ -239,28 +236,16 @@ impl<W: Write> SyncWsWrite<W> {
         let mut guard = self.inner.lock().unwrap();
         if !self.closed {
             self.encoder.begin_close();
-            write_frame(&mut *guard, &mut self.encoder, &[])?;
+            while !self.encoder.is_complete() {
+                let pending = self.encoder.pending(&[]);
+                guard.write_all(pending)?;
+                let n = pending.len();
+                self.encoder.advance(n);
+            }
             self.closed = true;
         }
         guard.flush()
     }
-}
-
-/// Write the encoder's frame in progress until it is complete.
-fn write_frame<W: Write>(
-    inner: &mut W,
-    encoder: &mut WsFrameEncoder,
-    payload: &[u8],
-) -> io::Result<()> {
-    while !encoder.is_complete() {
-        match inner.write(encoder.pending(payload)) {
-            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-            Ok(n) => encoder.advance(n),
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
 }
 
 impl<W: Write> Write for SyncWsWrite<W> {
@@ -271,7 +256,12 @@ impl<W: Write> Write for SyncWsWrite<W> {
         }
         let mut guard = self.inner.lock().unwrap();
         self.encoder.begin_binary(buf);
-        write_frame(&mut *guard, &mut self.encoder, buf)?;
+        while !self.encoder.is_complete() {
+            let pending = self.encoder.pending(buf);
+            guard.write_all(pending)?;
+            let n = pending.len();
+            self.encoder.advance(n);
+        }
         Ok(buf.len())
     }
 

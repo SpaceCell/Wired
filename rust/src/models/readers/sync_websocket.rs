@@ -54,7 +54,7 @@ use crate::models::transports::sync_websocket::SyncWebSocketTransport;
 /// Read-side type of [`SyncWebSocketTableReader`]. Boxing the
 /// [`SyncWsRead`] lets every constructor return the same struct type for
 /// different read and pong-writer halves.
-type SyncWsBoxedRead = Box<dyn Read + Send + 'static>;
+type WsSyncRead = Box<dyn Read + Send + 'static>;
 
 /// Sync Arrow IPC reader over a WebSocket connection.
 ///
@@ -63,7 +63,7 @@ type SyncWsBoxedRead = Box<dyn Read + Send + 'static>;
 ///
 /// Implements `Iterator<Item = io::Result<Table>>` for continuous streaming.
 pub struct SyncWebSocketTableReader {
-    inner: SyncTableReader<SyncWsBoxedRead, Vec64<u8>>,
+    inner: SyncTableReader<WsSyncRead, Vec64<u8>>,
 }
 
 impl SyncWebSocketTableReader {
@@ -111,7 +111,14 @@ impl SyncWebSocketTableReader {
         limits: Option<DecodeLimits>,
     ) -> Self {
         let shared_writer = Arc::new(Mutex::new(io::sink()));
-        Self::from_ws_read(SyncWsRead::new(stream, shared_writer), protocol, limits)
+        let ws_read = SyncWsRead::new(stream, shared_writer);
+        let inner = SyncTableReader::<WsSyncRead, Vec64<u8>>::new(
+            Box::new(ws_read),
+            BufferChunkSize::WebSocket.chunk_size(),
+            protocol,
+            limits,
+        );
+        Self { inner }
     }
 
     /// Build a table reader from the raw post-handshake read and write
@@ -128,7 +135,14 @@ impl SyncWebSocketTableReader {
         W: Write + Send + 'static,
     {
         let (shared_writer, _ws_write) = SyncWsWrite::new(write_half);
-        Self::from_ws_read(SyncWsRead::new(read_half, shared_writer), protocol, limits)
+        let ws_read = SyncWsRead::new(read_half, shared_writer);
+        let inner = SyncTableReader::<WsSyncRead, Vec64<u8>>::new(
+            Box::new(ws_read),
+            BufferChunkSize::WebSocket.chunk_size(),
+            protocol,
+            limits,
+        );
+        Self { inner }
     }
 
     /// As [`Self::from_halves`], for the connecting peer, with pong
@@ -144,25 +158,9 @@ impl SyncWebSocketTableReader {
         W: Write + Send + 'static,
     {
         let (shared_writer, _ws_write) = SyncWsWrite::new_client(write_half);
-        Self::from_ws_read(
-            SyncWsRead::new_client(read_half, shared_writer),
-            protocol,
-            limits,
-        )
-    }
-
-    fn from_ws_read<R, W>(
-        ws_read: SyncWsRead<R, W>,
-        protocol: IPCMessageProtocol,
-        limits: Option<DecodeLimits>,
-    ) -> Self
-    where
-        R: Read + Send + 'static,
-        W: Write + Send + 'static,
-    {
-        let boxed: SyncWsBoxedRead = Box::new(ws_read);
-        let inner = SyncTableReader::new(
-            boxed,
+        let ws_read = SyncWsRead::new_client(read_half, shared_writer);
+        let inner = SyncTableReader::<WsSyncRead, Vec64<u8>>::new(
+            Box::new(ws_read),
             BufferChunkSize::WebSocket.chunk_size(),
             protocol,
             limits,
