@@ -179,12 +179,11 @@ pub fn write_pong_frame(buf: &mut [u8], ping_payload: &[u8]) -> usize {
     2 + len
 }
 
-/// Fresh 32-bit masking key for a client-to-server frame.
+/// Generates fresh 32-bit masking keys for client-to-server frames.
 ///
-/// WebSocket masking prevents attacker-controlled clients from choosing wire
-/// bytes that resemble HTTP traffic and poison an intermediary proxy's cache.
-/// It is required framing, not encryption, so cryptographic secrecy is not
-/// needed from the key.
+/// Masking prevents clients from constructing wire bytes that resemble HTTP
+/// traffic and could poison intermediary proxy caches. It provides no
+/// encryption.
 pub(crate) fn fresh_mask_key() -> [u8; 4] {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
