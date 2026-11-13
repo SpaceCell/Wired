@@ -45,7 +45,7 @@ Other transports (HTTP/2, QUIC, WebSocket, UDS, files, memory maps) expose the s
 
 ## Capabilities
 
-**Transports:** TCP, Unix domain sockets, HTTP/2, QUIC, WebSocket, WebTransport, standard I/O, `io_uring`. Unix domain sockets are also available in sync form, with no async runtime.
+**Transports:** TCP, Unix domain sockets, HTTP/2, QUIC, WebSocket, WebTransport, standard I/O, `io_uring`. Unix domain sockets and WebSocket are also available in sync form, without an async runtime.
 
 **Formats:** Arrow IPC (file and stream), CSV, JSON, NDJSON, Parquet, TLV framing, memory maps, chunked datasets.
 
@@ -124,6 +124,10 @@ Sync forms read and write tables from a dedicated thread with no async runtime, 
 | `SyncTableWriter` | Any `std::io::Write` (Arrow IPC stream or file) |
 | `SyncUdsTableReader` | Unix domain socket, `connect` or `accept` |
 | `SyncUdsTableWriter` | Unix domain socket, `connect` or `accept` |
+| `SyncWebSocketTableReader` | WebSocket `ws://`, `connect` or `accept` |
+| `SyncWebSocketTableWriter` | WebSocket `ws://`, `connect` or `accept` |
+| `SyncWebSocketTransport` | WebSocket `ws://` connection setup, `connect`, `bind` or `accept` |
+| `SyncWsRead`, `SyncWsWrite` | WebSocket byte streams, and whole text or binary messages through `SyncWsRead::read_message` |
 
 ```rust
 use lightstream::models::readers::sync_uds::SyncUdsTableReader;
@@ -216,7 +220,7 @@ cargo run --example uds_arrow --features uds
 | `tcp` | TCP transport |
 | `http` | HTTP/2 transport |
 | `quic` | QUIC transport |
-| `websocket` | WebSocket transport |
+| `websocket` | WebSocket transport, in async and sync forms |
 | `uds` | Unix domain sockets, in async and sync forms |
 | `stdio` | Standard I/O |
 | `webtransport` | WebTransport (experimental) |

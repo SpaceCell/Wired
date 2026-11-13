@@ -179,6 +179,19 @@ pub fn write_pong_frame(buf: &mut [u8], ping_payload: &[u8]) -> usize {
     2 + len
 }
 
+/// Fresh 32-bit masking key for a client-to-server frame.
+///
+/// WebSocket masking prevents attacker-controlled clients from choosing wire
+/// bytes that resemble HTTP traffic and poison an intermediary proxy's cache.
+/// It is required framing, not encryption, so cryptographic secrecy is not
+/// needed from the key.
+pub(crate) fn fresh_mask_key() -> [u8; 4] {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let h = RandomState::new().build_hasher().finish();
+    ((h as u32) ^ ((h >> 32) as u32)).to_le_bytes()
+}
+
 /// Unmask a WebSocket payload in place.
 ///
 /// Applies the 4-byte XOR masking key cyclically. For unmasked frames
@@ -202,10 +215,11 @@ pub fn unmask(payload: &mut [u8], mask_key: [u8; 4]) {
         mask_u64
     } else {
         // Rotate the mask to account for prefix alignment offset
-        let shifted = mask_key.repeat(3);
-        let start = offset;
-        let chunk = &shifted[start..start + 8];
-        u64::from_ne_bytes(chunk.try_into().unwrap())
+        let mut rotated = [0u8; 8];
+        for (i, byte) in rotated.iter_mut().enumerate() {
+            *byte = mask_key[(offset + i) % 4];
+        }
+        u64::from_ne_bytes(rotated)
     };
     for word in aligned.iter_mut() {
         *word ^= aligned_mask;
@@ -314,6 +328,28 @@ mod tests {
 
         unmask(&mut data, mask_key); // XOR is its own inverse
         assert_eq!(data, original);
+    }
+
+    /// Unmasking matches a byte-by-byte XOR for every start alignment and
+    /// length across the prefix, aligned and suffix regions.
+    #[test]
+    fn test_unmask_matches_bytewise_xor_at_every_alignment() {
+        let mask_key = [0xAB, 0xCD, 0xEF, 0x01];
+        let backing: Vec<u8> = (0..64u8).collect();
+        for start in 0..8 {
+            for len in 0..40 {
+                let mut data = backing[start..start + len].to_vec();
+                // Shift the slice within a larger buffer to vary its
+                // alignment independently of the allocation.
+                let mut shifted = vec![0u8; start + len];
+                shifted[start..].copy_from_slice(&data);
+                unmask(&mut shifted[start..], mask_key);
+                for (i, byte) in data.iter_mut().enumerate() {
+                    *byte ^= mask_key[i % 4];
+                }
+                assert_eq!(&shifted[start..], &data[..], "start {start}, len {len}");
+            }
+        }
     }
 
     #[test]

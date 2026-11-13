@@ -153,6 +153,10 @@ pub mod models {
         /// TLV wire format encoders
         pub mod tlv;
 
+        /// WebSocket frame encoder
+        #[cfg(feature = "websocket")]
+        pub mod websocket;
+
         /// CSV encoder for tables and supertables
         #[cfg(feature = "csv")]
         pub mod csv;
@@ -188,6 +192,10 @@ pub mod models {
 
         /// TLV stream decoder
         pub mod tlv;
+
+        /// WebSocket frame decoder
+        #[cfg(feature = "websocket")]
+        pub mod websocket;
 
         /// ASCII-to-integer parser used by the CSV decoder.
         #[cfg(feature = "csv")]
@@ -278,6 +286,10 @@ pub mod models {
         /// WebSocket table reader
         #[cfg(feature = "websocket")]
         pub mod websocket;
+
+        /// Sync WebSocket table reader over `std::net`.
+        #[cfg(feature = "websocket")]
+        pub mod sync_websocket;
 
         /// QUIC table reader
         #[cfg(feature = "quic")]
@@ -384,6 +396,10 @@ pub mod models {
         #[cfg(feature = "websocket")]
         pub mod websocket;
 
+        /// Sync WebSocket table writer over `std::net`.
+        #[cfg(feature = "websocket")]
+        pub mod sync_websocket;
+
         /// QUIC table writer
         #[cfg(feature = "quic")]
         pub mod quic;
@@ -448,6 +464,10 @@ pub mod models {
         #[cfg(feature = "websocket")]
         pub mod websocket;
 
+        /// Sync WebSocket Transport over `std::net`.
+        #[cfg(feature = "websocket")]
+        pub mod sync_websocket;
+
         /// HTTP/2 Transport.
         #[cfg(feature = "http")]
         pub mod http;
@@ -483,6 +503,10 @@ pub mod models {
         /// WebSocket byte stream and sink adapters.
         #[cfg(feature = "websocket")]
         pub mod websocket;
+
+        /// Sync WebSocket byte stream adapters over `std::io`.
+        #[cfg(feature = "websocket")]
+        pub mod sync_websocket;
 
         /// QUIC byte stream adapter.
         #[cfg(feature = "quic")]
