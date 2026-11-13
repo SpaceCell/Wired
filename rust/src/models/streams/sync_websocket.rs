@@ -6,19 +6,17 @@
 
 //! # Synchronous WebSocket byte stream adapters
 //!
-//! Blocking counterparts of [`WsRead`] and [`WsWrite`] over `std::io`, for
-//! WebSocket I/O on a dedicated thread without an async runtime.
+//! Blocking counterparts to [`WsRead`] and [`WsWrite`] using `std::io`.
+//! Support WebSocket I/O on dedicated threads without an async runtime.
 //!
-//! The adapters perform the IO. The WebSocket protocol is held by
-//! [`WsFrameDecoder`] on the read side and [`WsFrameEncoder`] on the write
-//! side, the same types the async adapters use. Both directions therefore
-//! accept and produce the same frames as the async adapters, and payload
-//! bytes are read from the socket into the caller's buffer without an
-//! intermediate copy.
+//! The adapters handle transport I/O using [`WsFrameDecoder`] for decoding
+//! and [`WsFrameEncoder`] for encoding. These protocol implementations are
+//! shared with the asynchronous adapters, ensuring compatible frame handling.
+//! Payload bytes are read directly from the socket into the caller's buffer.
 //!
-//! [`SyncWsRead`] implements `std::io::Read` over binary message payloads,
-//! as the table reader requires, and reads whole text or binary messages
-//! through [`SyncWsRead::read_message`].
+//! [`SyncWsRead`] implements `std::io::Read` for binary payload streams used
+//! by table readers. [`SyncWsRead::read_message`] reads complete text or
+//! binary messages.
 //!
 //! [`WsRead`]: crate::models::streams::websocket::WsRead
 //! [`WsWrite`]: crate::models::streams::websocket::WsWrite
