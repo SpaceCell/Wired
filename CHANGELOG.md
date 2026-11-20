@@ -18,6 +18,7 @@ Notable changes are recorded from 0.5.0 onward.
 
 ### Breaking Changes
 
+- The accept functions of the transports with a request path return that path before the connection's halves, for example `/prices`: `WebSocketTransport::accept` and `accept_tls`, `SyncWebSocketTransport::accept`, `HttpTransport::accept` and `accept_tls`, and `WebTransport::accept`. The `Transport` trait implementations still return the halves only, because the trait covers transports without a request path.
 - Renamed `TableStreamDecoder` to `TableDecoder`. Decoding is now synchronous, with readers responsible for I/O. `TableDecoder::new` no longer accepts a source. Readers fill `spare_uninit`, commit bytes with `advance` and call `decode_next`, which returns `TableDecodeResult`.
 - Moved the `Stream` implementation and `read_keyed` from the decoder to `TableReader`, which owns the `AsyncRead` source.
 - Renamed `TableStreamEncoder` to `TableEncoder`.

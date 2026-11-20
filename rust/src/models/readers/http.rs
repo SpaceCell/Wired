@@ -144,7 +144,7 @@ impl HttpTableReader {
         listener: &TcpListener,
         limits: Option<DecodeLimits>,
     ) -> io::Result<Self> {
-        let (recv_read, send_write) = HttpTransport::accept(listener).await?;
+        let (_path, recv_read, send_write) = HttpTransport::accept(listener).await?;
         Self::from_exchange(recv_read, send_write, limits).await
     }
 

@@ -100,7 +100,7 @@ impl WebSocketTableReader {
         listener: &TcpListener,
         limits: Option<DecodeLimits>,
     ) -> io::Result<Self> {
-        let (read_half, write_half) = WebSocketTransport::accept(listener).await?;
+        let (_path, read_half, write_half) = WebSocketTransport::accept(listener).await?;
         Ok(Self::from_halves(
             read_half,
             write_half,

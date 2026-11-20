@@ -227,6 +227,29 @@ mod ws {
         writer.finish().await.unwrap();
         server.await.unwrap();
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_websocket_accept_returns_the_request_path() {
+        let listener = WebSocketTransport::bind("ws://127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (path, read_half, write_half) = WebSocketTransport::accept(&listener).await.unwrap();
+            assert_eq!(path, "/prices");
+            let mut writer =
+                WebSocketTableWriter::from_halves(read_half, write_half, table_schema(), None)
+                    .unwrap();
+            writer.write_table(make_table("a", 3)).await.unwrap();
+            writer.finish().await.unwrap();
+        });
+
+        let reader = WebSocketTableReader::connect(&format!("ws://{addr}/prices"), None)
+            .await
+            .unwrap();
+        let tables = reader.read_all_tables().await.unwrap();
+        assert_tables(&tables, &[3]);
+        server.await.unwrap();
+    }
 }
 
 #[cfg(feature = "http")]
@@ -465,14 +488,15 @@ mod wt {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            let (recv, _send) = WebTransport::accept(&listener).await.unwrap();
+            let (path, recv, _send) = WebTransport::accept(&listener).await.unwrap();
+            assert_eq!(path, "/feed");
             let reader = WebTransportTableReader::from_recv(recv, None);
             let tables = reader.read_all_tables().await.unwrap();
             assert_tables(&tables, &[4]);
         });
 
         let (_recv, send) = WebTransport::connect(
-            &format!("https://127.0.0.1:{port}"),
+            &format!("https://127.0.0.1:{port}/feed"),
             make_client_config(cert_hash),
         )
         .await
@@ -490,7 +514,7 @@ mod wt {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            let (_recv, send) = WebTransport::accept(&listener).await.unwrap();
+            let (_path, _recv, send) = WebTransport::accept(&listener).await.unwrap();
             let mut writer = WebTransportTableWriter::new(send, table_schema(), None).unwrap();
             writer.write_table(make_table("a", 3)).await.unwrap();
             writer.write_table(make_table("b", 5)).await.unwrap();
@@ -564,7 +588,7 @@ mod tls_wires {
         let addr = listener.local_addr().unwrap();
 
         let server = tokio::spawn(async move {
-            let (read_half, write_half) =
+            let (_path, read_half, write_half) =
                 WebSocketTransport::accept_tls(&listener, server_config)
                     .await
                     .unwrap();
@@ -597,9 +621,10 @@ mod tls_wires {
         let addr = listener.local_addr().unwrap();
 
         let server = tokio::spawn(async move {
-            let (recv_read, send_write) = HttpTransport::accept_tls(&listener, server_config)
+            let (path, recv_read, send_write) = HttpTransport::accept_tls(&listener, server_config)
                 .await
                 .unwrap();
+            assert_eq!(path, "/ingest");
             let reader = HttpTableReader::from_exchange(recv_read, send_write, None)
                 .await
                 .unwrap();

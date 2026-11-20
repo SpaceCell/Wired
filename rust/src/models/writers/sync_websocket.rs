@@ -90,7 +90,7 @@ impl SyncWebSocketTableWriter {
         schema: Vec<Field>,
         compression: Option<Compression>,
     ) -> io::Result<Self> {
-        let (read_half, write_half) = SyncWebSocketTransport::accept(listener)?;
+        let (_path, read_half, write_half) = SyncWebSocketTransport::accept(listener)?;
         Ok(Self::from_halves(read_half, write_half, schema, compression))
     }
 

@@ -28,9 +28,10 @@ use std::str;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
 use crate::traits::transport::Transport;
 
@@ -89,31 +90,49 @@ impl WebSocketTransport {
     }
 
     /// Accept the next inbound connection, run the server upgrade
-    /// handshake, and return the post-handshake halves.
+    /// handshake, and return the request path with the post-handshake halves.
+    ///
+    /// The path is returned as written in the request, for example `/prices`.
     pub async fn accept(
         listener: &TcpListener,
-    ) -> io::Result<(ReadHalf<TcpStream>, WriteHalf<TcpStream>)> {
+    ) -> io::Result<(String, ReadHalf<TcpStream>, WriteHalf<TcpStream>)> {
         let (tcp, _) = listener.accept().await?;
-        let ws_stream = accept_async(tcp).await.map_err(io::Error::other)?;
-        Ok(tokio::io::split(ws_stream.into_inner()))
+        let mut path = String::new();
+        let ws_stream = accept_hdr_async(tcp, |request: &Request, response: Response| {
+            path = request.uri().path().to_string();
+            Ok(response)
+        })
+        .await
+        .map_err(io::Error::other)?;
+        let (read_half, write_half) = tokio::io::split(ws_stream.into_inner());
+        Ok((path, read_half, write_half))
     }
 
     /// Accept the next inbound connection, terminate TLS with the
     /// supplied `rustls::ServerConfig`, run the server upgrade
-    /// handshake over it, and return the post-handshake halves.
+    /// handshake over it, and return the request path with the
+    /// post-handshake halves.
     #[cfg(feature = "tls")]
     pub async fn accept_tls(
         listener: &TcpListener,
         config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
     ) -> io::Result<(
+        String,
         ReadHalf<tokio_rustls::server::TlsStream<TcpStream>>,
         WriteHalf<tokio_rustls::server::TlsStream<TcpStream>>,
     )> {
         let (tcp, _) = listener.accept().await?;
         let acceptor = tokio_rustls::TlsAcceptor::from(config);
         let tls = acceptor.accept(tcp).await?;
-        let ws_stream = accept_async(tls).await.map_err(io::Error::other)?;
-        Ok(tokio::io::split(ws_stream.into_inner()))
+        let mut path = String::new();
+        let ws_stream = accept_hdr_async(tls, |request: &Request, response: Response| {
+            path = request.uri().path().to_string();
+            Ok(response)
+        })
+        .await
+        .map_err(io::Error::other)?;
+        let (read_half, write_half) = tokio::io::split(ws_stream.into_inner());
+        Ok((path, read_half, write_half))
     }
 }
 
@@ -252,7 +271,11 @@ impl Transport for WebSocketTransport {
         WebSocketTransport::bind(endpoint).await
     }
 
+    /// The `Transport` contract returns the halves only, because most
+    /// transports don't have a request path. Callers that route by path use
+    /// [`WebSocketTransport::accept`].
     async fn accept(listener: &TcpListener) -> io::Result<(Self::Read, Self::Write)> {
-        WebSocketTransport::accept(listener).await
+        let (_path, read_half, write_half) = WebSocketTransport::accept(listener).await?;
+        Ok((read_half, write_half))
     }
 }

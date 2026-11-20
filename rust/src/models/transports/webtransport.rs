@@ -60,9 +60,14 @@ impl WebTransport {
     }
 
     /// Accept the next inbound session, take its first bidirectional
-    /// stream, and return the stream's halves.
-    pub async fn accept(listener: &Endpoint<Server>) -> io::Result<(RecvStream, SendStream)> {
+    /// stream, and return the session's request path with the stream's
+    /// halves.
+    ///
+    /// The path is returned as written in the session's CONNECT request, for
+    /// example `/feed`.
+    pub async fn accept(listener: &Endpoint<Server>) -> io::Result<(String, RecvStream, SendStream)> {
         let session_request = listener.accept().await.await.map_err(io::Error::other)?;
+        let path = session_request.path().to_string();
         let conn = session_request.accept().await.map_err(io::Error::other)?;
         let (send, recv) = conn.accept_bi().await.map_err(io::Error::other)?;
         // The session dies when every handle drops, so a task holds
@@ -70,6 +75,6 @@ impl WebTransport {
         tokio::spawn(async move {
             conn.closed().await;
         });
-        Ok((recv, send))
+        Ok((path, recv, send))
     }
 }
