@@ -20,11 +20,11 @@ Notable changes are recorded from 0.5.0 onward.
 - Renamed `TableStreamEncoder` to `TableEncoder`.
 - Renamed `models::decoders::ipc::table_stream_decoder` to `models::decoders::ipc::table_decoder`.
 - Renamed `models::encoders::ipc::table_stream` to `models::encoders::ipc::table_encoder`.
-- `bind` on `WebSocketTransport`, `SyncWebSocketTransport`, `HttpTransport` and `WebTransport` now returns `WebSocketListener`, `SyncWebSocketListener`, `HttpListener` and `WebTransportListener`, which the transports' `accept` and `accept_tls`, the matching table readers and writers, and `Transport::Listener` now receive. `WebTransport::bind` now receives the endpoint URL ahead of its `ServerConfig`.
+- `bind` on `WebSocketTransport`, `SyncWebSocketTransport`, `HttpTransport` and `WebTransport` now returns a listener type for that transport: `WebSocketListener`, `SyncWebSocketListener`, `HttpListener` and `WebTransportListener`. `accept` and `accept_tls` on those transports, and `accept` on their table readers and writers, receive that type in place of `TcpListener`. `WebTransport::bind` now receives the endpoint URL before its `ServerConfig`.
 
 ### Fixed
 
-- WebSocket, HTTP/2 and WebTransport listeners now accept only the connections made to the path of the URL they were bound to. Several paths on one scheme, host and port share a socket within the process, connections to an unbound path are refused with status `404 Not Found`, and the Python crate's accepting reads and writes follow the same rules. Previously, a listener accepted connections for any path on its port.
+- WebSocket, HTTP/2 and WebTransport listeners now accept only connections to the path of the URL they were bound with. Several paths on one host and port share a socket within the process, and a connection to a path that is not bound is refused with status `404 Not Found`. Accepting reads and writes in the Python crate follow the same rules. Previously, a listener accepted connections to any path on its port.
 - `TableStreamWriter::finish` now writes the Stream protocol end-of-stream marker when no tables have been written. Empty streams previously didn't produce any bytes, which `TableReader` rejected as truncated.
 
 ## v0.8.0 27 Oct 2026
