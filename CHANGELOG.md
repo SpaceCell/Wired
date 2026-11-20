@@ -14,6 +14,7 @@ Notable changes are recorded from 0.5.0 onward.
 - Added `WsFrameDecoder` and `WsFrameEncoder` for shared protocol handling across synchronous and asynchronous adapters. Existing `WsRead` and `WsWrite` APIs and behaviour are unchanged.
 - Added the `runtime` module with a process-wide Tokio runtime for object storage requests. Applications install their own runtime with `runtime::init_with`, and Lightstream otherwise initialises a default multi-thread runtime on first use.
 - Object storage requests from `StorageReader` and `StorageWriter` run on the runtime current on the calling thread, or on the process runtime otherwise. Callers no longer enter a runtime first.
+- Added file reads over `http://` and `https://` paths behind the `https` feature. File readers accept these URLs in place of paths and read them through the object storage HTTP backend.
 
 ### Breaking Changes
 

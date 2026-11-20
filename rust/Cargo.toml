@@ -216,6 +216,9 @@ aws = ["object_storage", "object_store/aws"]
 gcp = ["object_storage", "object_store/gcp"]
 # Azure Blob Storage
 azure = ["object_storage", "object_store/azure"]
+# File reads over `http://` and `https://` paths through the object storage
+# HTTP backend. Separate from the `http` transport feature.
+https = ["object_storage", "object_store/http"]
 
 # Lightstream protocol multiplexing
 protocol = []
