@@ -12,8 +12,8 @@ Notable changes are recorded from 0.5.0 onward.
 - Added `SyncWebSocketTableReader` and `SyncWebSocketTableWriter` under the `websocket` feature for blocking plaintext WebSocket feeds, with the same wire format, `DecodeLimits` and `Compression` options as the async types.
 - Added `SyncWebSocketTransport`, `SyncWsRead` and `SyncWsWrite` for blocking WebSocket I/O, including complete text and binary message reads.
 - Added `WsFrameDecoder` and `WsFrameEncoder` for shared protocol handling across synchronous and asynchronous adapters. Existing `WsRead` and `WsWrite` APIs and behaviour are unchanged.
-- Added the `runtime` module with a process-wide Tokio runtime for synchronous IO. Applications install their own runtime with `runtime::init_with`, and Lightstream otherwise initialises a default multi-thread runtime on first use.
-- Synchronous object storage reads and writes run on the runtime current on the calling thread, or on the process runtime otherwise. They no longer require an entered runtime.
+- Added the `runtime` module with a process-wide Tokio runtime for object storage requests. Applications install their own runtime with `runtime::init_with`, and Lightstream otherwise initialises a default multi-thread runtime on first use.
+- Object storage requests from `StorageReader` and `StorageWriter` run on the runtime current on the calling thread, or on the process runtime otherwise. Callers no longer enter a runtime first.
 
 ### Breaking Changes
 

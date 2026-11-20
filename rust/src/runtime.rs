@@ -6,14 +6,15 @@
 
 //! # Runtime
 //!
-//! The Tokio runtime that Lightstream's synchronous IO runs on.
+//! The Tokio runtime that object storage requests run on.
 //!
 //! ## Context
-//! Synchronous object storage reads and writes run their requests as Tokio
-//! tasks and wait for the results. The tasks run on the runtime current on
-//! the calling thread when there is one, and on the process runtime
-//! otherwise. Lightstream and the application share the process runtime,
-//! and one multi-thread runtime therefore performs the IO of both.
+//! Object storage requests are async network IO through `object_store`, and
+//! run as Tokio tasks. `StorageReader` and `StorageWriter` wait for the
+//! results of their requests. The requests run on the runtime current on the
+//! calling thread when there is one, and on the process runtime otherwise.
+//! Lightstream and the application share the process runtime, and one
+//! multi-thread runtime therefore performs the IO of both.
 //!
 //! ## Details
 //! - Applications that build their own runtime, such as Lightning, install it
@@ -59,8 +60,7 @@ pub fn init_with(init: impl FnOnce() -> io::Result<Runtime>) -> io::Result<Handl
     Ok(runtime.handle().clone())
 }
 
-/// Returns the handle of the runtime that Lightstream's synchronous IO runs
-/// on.
+/// Returns the handle of the runtime that object storage requests run on.
 ///
 /// The runtime current on the calling thread is returned first, followed by
 /// the process runtime. Without either, the default process runtime is

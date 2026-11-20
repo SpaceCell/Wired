@@ -566,7 +566,7 @@ pub mod models {
 #[cfg(feature = "object_storage")]
 pub mod object_storage;
 
-/// The Tokio runtime that Lightstream's synchronous IO runs on.
+/// The Tokio runtime that object storage requests run on.
 pub mod runtime;
 
 /// FlatBuffers-compiled Arrow IPC metadata support.
