@@ -122,7 +122,7 @@ impl HttpTableWriter {
         schema: Vec<Field>,
         compression: Option<Compression>,
     ) -> io::Result<Self> {
-        let (recv_read, send_write) = HttpTransport::accept(listener).await?;
+        let (_path, recv_read, send_write) = HttpTransport::accept(listener).await?;
         Self::from_exchange(recv_read, send_write, schema, compression)
     }
 

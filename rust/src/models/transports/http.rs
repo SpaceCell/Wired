@@ -93,22 +93,25 @@ impl HttpTransport {
     }
 
     /// Accept the next inbound connection, take its first request,
-    /// answer with response headers, and return the exchange's byte
-    /// halves.
-    pub async fn accept(listener: &TcpListener) -> io::Result<(H2RecvRead, H2SendWrite)> {
+    /// answer with response headers, and return the request path with the
+    /// exchange's byte halves.
+    ///
+    /// The path is returned as written in the request, for example `/feed`.
+    pub async fn accept(listener: &TcpListener) -> io::Result<(String, H2RecvRead, H2SendWrite)> {
         let (tcp, _) = listener.accept().await?;
         accept_exchange(tcp).await
     }
 
     /// Accept the next inbound connection, terminate TLS with the
     /// supplied `rustls::ServerConfig`, take the exchange's first
-    /// request, answer with response headers, and return its byte
-    /// halves. The config advertises the `h2` application protocol.
+    /// request, answer with response headers, and return the request path
+    /// with its byte halves. The config advertises the `h2` application
+    /// protocol.
     #[cfg(feature = "tls")]
     pub async fn accept_tls(
         listener: &TcpListener,
         config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
-    ) -> io::Result<(H2RecvRead, H2SendWrite)> {
+    ) -> io::Result<(String, H2RecvRead, H2SendWrite)> {
         let (tcp, _) = listener.accept().await?;
         let acceptor = tokio_rustls::TlsAcceptor::from(config);
         let tls = acceptor.accept(tcp).await?;
@@ -147,9 +150,9 @@ where
 }
 
 /// Run the h2 server handshake on an established stream, take its
-/// first request, answer with response headers, and return the byte
-/// halves.
-async fn accept_exchange<T>(io_stream: T) -> io::Result<(H2RecvRead, H2SendWrite)>
+/// first request, answer with response headers, and return the request
+/// path with the byte halves.
+async fn accept_exchange<T>(io_stream: T) -> io::Result<(String, H2RecvRead, H2SendWrite)>
 where
     T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
@@ -170,6 +173,7 @@ where
             )
         })?
         .map_err(io::Error::other)?;
+    let path = req.uri().path().to_string();
     let recv = req.into_body();
 
     let response = Response::builder()
@@ -185,7 +189,7 @@ where
     // until the peer closes.
     tokio::spawn(async move { while conn.accept().await.is_some() {} });
 
-    Ok((H2RecvRead::new(recv), H2SendWrite::new(send_stream)))
+    Ok((path, H2RecvRead::new(recv), H2SendWrite::new(send_stream)))
 }
 
 impl Transport for HttpTransport {
@@ -202,7 +206,11 @@ impl Transport for HttpTransport {
         HttpTransport::bind(endpoint).await
     }
 
+    /// The `Transport` contract returns the halves only, because most
+    /// transports don't have a request path. Callers that route by path use
+    /// [`HttpTransport::accept`].
     async fn accept(listener: &TcpListener) -> io::Result<(H2RecvRead, H2SendWrite)> {
-        HttpTransport::accept(listener).await
+        let (_path, recv_read, send_write) = HttpTransport::accept(listener).await?;
+        Ok((recv_read, send_write))
     }
 }

@@ -488,14 +488,15 @@ mod wt {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            let (recv, _send) = WebTransport::accept(&listener).await.unwrap();
+            let (path, recv, _send) = WebTransport::accept(&listener).await.unwrap();
+            assert_eq!(path, "/feed");
             let reader = WebTransportTableReader::from_recv(recv, None);
             let tables = reader.read_all_tables().await.unwrap();
             assert_tables(&tables, &[4]);
         });
 
         let (_recv, send) = WebTransport::connect(
-            &format!("https://127.0.0.1:{port}"),
+            &format!("https://127.0.0.1:{port}/feed"),
             make_client_config(cert_hash),
         )
         .await
@@ -513,7 +514,7 @@ mod wt {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            let (_recv, send) = WebTransport::accept(&listener).await.unwrap();
+            let (_path, _recv, send) = WebTransport::accept(&listener).await.unwrap();
             let mut writer = WebTransportTableWriter::new(send, table_schema(), None).unwrap();
             writer.write_table(make_table("a", 3)).await.unwrap();
             writer.write_table(make_table("b", 5)).await.unwrap();
@@ -620,9 +621,10 @@ mod tls_wires {
         let addr = listener.local_addr().unwrap();
 
         let server = tokio::spawn(async move {
-            let (recv_read, send_write) = HttpTransport::accept_tls(&listener, server_config)
+            let (path, recv_read, send_write) = HttpTransport::accept_tls(&listener, server_config)
                 .await
                 .unwrap();
+            assert_eq!(path, "/ingest");
             let reader = HttpTableReader::from_exchange(recv_read, send_write, None)
                 .await
                 .unwrap();
