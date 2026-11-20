@@ -566,6 +566,9 @@ pub mod models {
 #[cfg(feature = "object_storage")]
 pub mod object_storage;
 
+/// The Tokio runtime that object storage requests run on.
+pub mod runtime;
+
 /// FlatBuffers-compiled Arrow IPC metadata support.
 pub mod arrow {
     /// Flatbuffers Arrow file metadata

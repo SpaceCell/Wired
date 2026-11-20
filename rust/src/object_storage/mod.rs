@@ -54,15 +54,15 @@
 //! still bounded by the client's `connect_timeout`.
 //!
 //! ## Runtime
-//! Object storage requests run as Tokio tasks on the caller's multi-thread
-//! runtime, and the runtime's worker threads perform the I/O.
+//! Object storage requests run as Tokio tasks on a multi-thread runtime, and
+//! the runtime's worker threads perform the I/O.
 //!
 //! - The async adapters in `models::streams::object_store` await their
 //!   requests within the caller's task.
 //! - The synchronous readers and writers spawn each request as a task and
-//!   wait for its result. They find the runtime with `Handle::try_current`,
-//!   which requires the calling thread to be within the runtime's context,
-//!   for example after `Handle::enter`.
+//!   wait for its result. The task runs on the runtime current on the
+//!   calling thread, or on the process runtime otherwise, see
+//!   [`crate::runtime`].
 //! - Async code uses the async adapters. A synchronous call made from async
 //!   code holds one of the runtime's workers until its request completes.
 //! - The parallel chunked reads and writes enter the caller's runtime on
@@ -86,4 +86,4 @@ pub use upload::ObjectUpload;
 
 pub(crate) use connection::{object_url, resolve};
 pub(crate) use error::io_error;
-pub(crate) use runtime::{current_handle, run_task};
+pub(crate) use runtime::run_task;
