@@ -17,8 +17,8 @@
 //! multi-thread runtime therefore performs the IO of both.
 //!
 //! ## Details
-//! - Applications that build their own runtime, such as Lightning, install it
-//!   with [`init_with`] before their first IO.
+//! - Applications that build their own runtime install it with [`init_with`]
+//!   before their first IO.
 //! - Without an installed runtime, [`handle`] initialises a default
 //!   multi-thread runtime on its first call, with its worker threads named
 //!   `lightstream-io`.
