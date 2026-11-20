@@ -28,7 +28,8 @@
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 
-use tokio_tungstenite::tungstenite::accept;
+use tokio_tungstenite::tungstenite::accept_hdr;
+use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
 use crate::models::transports::websocket::{
     check_handshake_response, handshake_closed, handshake_request, handshake_response_complete,
@@ -64,13 +65,21 @@ impl SyncWebSocketTransport {
     }
 
     /// Accept the next inbound connection, run the server upgrade
-    /// handshake, and return the post-handshake read and write halves.
-    pub fn accept(listener: &TcpListener) -> io::Result<(TcpStream, TcpStream)> {
+    /// handshake, and return the request path with the post-handshake read
+    /// and write halves.
+    ///
+    /// The path is returned as written in the request, for example `/prices`.
+    pub fn accept(listener: &TcpListener) -> io::Result<(String, TcpStream, TcpStream)> {
         let (tcp, _) = listener.accept()?;
-        let ws_stream = accept(tcp).map_err(|e| io::Error::other(e.to_string()))?;
+        let mut path = String::new();
+        let ws_stream = accept_hdr(tcp, |request: &Request, response: Response| {
+            path = request.uri().path().to_string();
+            Ok(response)
+        })
+        .map_err(|e| io::Error::other(e.to_string()))?;
         let tcp = ws_stream.into_inner();
         let write_half = tcp.try_clone()?;
-        Ok((tcp, write_half))
+        Ok((path, tcp, write_half))
     }
 }
 

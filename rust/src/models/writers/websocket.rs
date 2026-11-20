@@ -98,7 +98,7 @@ impl WebSocketTableWriter {
         schema: Vec<Field>,
         compression: Option<Compression>,
     ) -> io::Result<Self> {
-        let (read_half, write_half) = WebSocketTransport::accept(listener).await?;
+        let (_path, read_half, write_half) = WebSocketTransport::accept(listener).await?;
         Self::from_halves(read_half, write_half, schema, compression)
     }
 

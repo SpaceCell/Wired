@@ -455,7 +455,7 @@ fn capture_messages(
 
     let mut ws_read = match reader_listener {
         Some(listener) => {
-            let (read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
+            let (_path, read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
             let (shared, _ws_write) = SyncWsWrite::new(write_half);
             SyncWsRead::new(read_half, shared)
         }
@@ -520,7 +520,7 @@ fn sync_transport_reads_text_and_binary_messages_from_a_connecting_peer() {
         pongs
     });
 
-    let (read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
+    let (_path, read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
     let (shared, ws_write) = SyncWsWrite::new(write_half);
     let mut ws_read = SyncWsRead::new(read_half, shared);
     let mut buf = Vec::new();
@@ -537,6 +537,16 @@ fn sync_transport_reads_text_and_binary_messages_from_a_connecting_peer() {
     drop(ws_write);
 
     assert_eq!(peer.join().unwrap(), vec![vec![7u8, 8, 9]]);
+}
+
+#[test]
+fn sync_accept_returns_the_request_path() {
+    let (listener, url) = bind_local();
+    let peer = thread::spawn(move || SyncWebSocketTransport::connect(&format!("{url}/prices")).unwrap());
+
+    let (path, _read_half, _write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
+    assert_eq!(path, "/prices");
+    drop(peer.join().unwrap());
 }
 
 #[test]
@@ -595,7 +605,7 @@ fn fragmented_messages_are_joined_across_interleaved_pings() {
         _read_half
     });
 
-    let (read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
+    let (_path, read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
     let (shared, _ws_write) = SyncWsWrite::new(write_half);
     let mut ws_read = SyncWsRead::new(read_half, shared);
     let mut buf = Vec::new();
@@ -623,7 +633,7 @@ fn messages_beyond_max_len_are_rejected() {
         _read_half
     });
 
-    let (read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
+    let (_path, read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
     let (shared, _ws_write) = SyncWsWrite::new(write_half);
     let mut ws_read = SyncWsRead::new(read_half, shared);
     let mut buf = Vec::new();

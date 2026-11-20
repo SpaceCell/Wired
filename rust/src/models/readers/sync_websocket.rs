@@ -88,7 +88,7 @@ impl SyncWebSocketTableReader {
     /// e.g. via `SyncWebSocketTransport::bind`, and holds it across
     /// connections. Uses `IPCMessageProtocol::Stream`.
     pub fn accept(listener: &TcpListener, limits: Option<DecodeLimits>) -> io::Result<Self> {
-        let (read_half, write_half) = SyncWebSocketTransport::accept(listener)?;
+        let (_path, read_half, write_half) = SyncWebSocketTransport::accept(listener)?;
         Ok(Self::from_halves(
             read_half,
             write_half,
