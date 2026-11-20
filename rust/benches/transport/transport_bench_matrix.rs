@@ -14,8 +14,8 @@
 //! `transport_<shape>_<scale>`. Enabled transport and compression combinations
 //! are registered as separate benchmarks within the group.
 //!
-//! Supported benchmarks include TCP, Unix domain sockets in async and sync
-//! forms, WebSocket, QUIC, WebTransport, HTTP/2 and the Lightstream protocol
+//! Supported benchmarks include TCP, Unix domain sockets and WebSocket in
+//! async and sync forms, QUIC, WebTransport, HTTP/2 and the Lightstream protocol
 //! over TCP. The `io_uring`
 //! feature adds TCP and UDS variants. The `zstd` and `tls` features add their
 //! respective compression and TLS variants.
@@ -160,6 +160,17 @@ fn bench_transport(c: &mut Criterion) {
             &schema,
             &dict_regs,
             "websocket_zstd",
+            Some(Compression::Zstd),
+        );
+        #[cfg(feature = "websocket")]
+        bench_websocket_sync(&mut group, &table, &schema, &dict_regs, "websocket_sync", None);
+        #[cfg(all(feature = "websocket", feature = "zstd"))]
+        bench_websocket_sync(
+            &mut group,
+            &table,
+            &schema,
+            &dict_regs,
+            "websocket_sync_zstd",
             Some(Compression::Zstd),
         );
 
@@ -372,9 +383,6 @@ fn bench_uds(
 }
 
 /// Sync UDS throughput through `SyncUdsTableWriter` and `SyncUdsTableReader`.
-///
-/// The writer and reader each run on their own thread with no async runtime,
-/// matching the deployment of sync sources and sinks.
 #[cfg(feature = "uds")]
 fn bench_uds_sync(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
@@ -506,6 +514,61 @@ fn bench_websocket(
                 writer.await.unwrap();
                 elapsed
             }
+        });
+    });
+}
+
+/// Sync WebSocket throughput through `SyncWebSocketTableWriter` and
+/// `SyncWebSocketTableReader`.
+#[cfg(feature = "websocket")]
+fn bench_websocket_sync(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    table: &Arc<Table>,
+    schema: &[Field],
+    dict_regs: &[(i64, Vec<String>)],
+    name: &str,
+    compression: Option<lightstream::compression::Compression>,
+) {
+    use lightstream::models::readers::sync_websocket::SyncWebSocketTableReader;
+    use lightstream::models::transports::sync_websocket::SyncWebSocketTransport;
+    use lightstream::models::writers::sync_websocket::SyncWebSocketTableWriter;
+
+    group.bench_function(name, |b| {
+        b.iter_custom(|iters| {
+            let listener = SyncWebSocketTransport::bind("ws://127.0.0.1:0").unwrap();
+            let url = format!("ws://{}", listener.local_addr().unwrap());
+
+            let write_table = Arc::clone(table);
+            let write_schema = schema.to_vec();
+            let write_dicts = dict_regs.to_vec();
+            let n = iters;
+
+            let writer = std::thread::spawn(move || {
+                let mut writer =
+                    SyncWebSocketTableWriter::connect(&url, write_schema, compression).unwrap();
+                for (id, values) in write_dicts {
+                    writer.register_dictionary(id, values);
+                }
+                for _ in 0..n {
+                    writer.write_table((*write_table).clone()).unwrap();
+                }
+                writer.finish().unwrap();
+            });
+
+            let mut reader = SyncWebSocketTableReader::accept(&listener, None).unwrap();
+
+            let start = std::time::Instant::now();
+            let mut count = 0u64;
+            while let Some(batch) = reader.read_next().unwrap() {
+                assert!(batch.n_rows > 0);
+                std::hint::black_box(&batch.cols);
+                count += 1;
+            }
+            let elapsed = start.elapsed();
+            assert_eq!(count, n);
+
+            writer.join().unwrap();
+            elapsed
         });
     });
 }

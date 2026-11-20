@@ -124,6 +124,29 @@ async fn client_handshake<S>(stream: &mut S, authority: &str, path: &str) -> io:
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
+    let (request, key) = handshake_request(authority, path);
+    stream.write_all(request.as_bytes()).await?;
+
+    // Read the response one byte at a time so nothing beyond the
+    // header terminator is consumed. Frames a fast server sends
+    // straight after its response stay in the stream for the frame
+    // parser.
+    let mut response = Vec::with_capacity(256);
+    let mut byte = [0u8; 1];
+    while !handshake_response_complete(&response)? {
+        if stream.read(&mut byte).await? == 0 {
+            return Err(handshake_closed());
+        }
+        response.push(byte[0]);
+    }
+    check_handshake_response(&response, &key)
+}
+
+/// Build the client upgrade request for `authority` and `path`, and return
+/// it with the `Sec-WebSocket-Key` it sends.
+///
+/// Shared by the async and blocking client handshakes.
+pub(crate) fn handshake_request(authority: &str, path: &str) -> (String, String) {
     let key = generate_key();
     let request = format!(
         "GET {path} HTTP/1.1\r\n\
@@ -133,32 +156,43 @@ where
          Sec-WebSocket-Key: {key}\r\n\
          Sec-WebSocket-Version: 13\r\n\r\n"
     );
-    stream.write_all(request.as_bytes()).await?;
+    (request, key)
+}
 
-    // Read the response one byte at a time so nothing beyond the
-    // header terminator is consumed. Frames a fast server sends
-    // straight after its response stay in the stream for the frame
-    // parser.
-    let mut response = Vec::with_capacity(256);
-    let mut byte = [0u8; 1];
-    while !response.ends_with(b"\r\n\r\n") {
-        if response.len() > MAX_HANDSHAKE_RESPONSE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "oversized WebSocket handshake response",
-            ));
-        }
-        if stream.read(&mut byte).await? == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "connection closed during the WebSocket handshake",
-            ));
-        }
-        response.push(byte[0]);
+/// Report whether the upgrade response bytes read so far end with the
+/// header terminator.
+///
+/// Returns `io::ErrorKind::InvalidData` once the response exceeds
+/// [`MAX_HANDSHAKE_RESPONSE`] without a terminator.
+pub(crate) fn handshake_response_complete(response: &[u8]) -> io::Result<bool> {
+    if response.ends_with(b"\r\n\r\n") {
+        return Ok(true);
     }
+    if response.len() > MAX_HANDSHAKE_RESPONSE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "oversized WebSocket handshake response",
+        ));
+    }
+    Ok(false)
+}
 
+/// Error for a connection closed before the upgrade response completed.
+pub(crate) fn handshake_closed() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "connection closed during the WebSocket handshake",
+    )
+}
+
+/// Check the complete upgrade response against the request's `key`.
+///
+/// Returns `io::ErrorKind::ConnectionRefused` for a status other than
+/// `101`, and `io::ErrorKind::InvalidData` for a missing or mismatched
+/// `Sec-WebSocket-Accept` header.
+pub(crate) fn check_handshake_response(response: &[u8], key: &str) -> io::Result<()> {
     let text =
-        str::from_utf8(&response).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        str::from_utf8(response).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let status_line = text.lines().next().unwrap_or_default();
     if !status_line.contains(" 101 ") {
         return Err(io::Error::new(
@@ -183,7 +217,7 @@ where
 
 /// Split a `ws://` or `wss://` URL or bare authority string into its
 /// authority and path sections.
-fn split_url(url: &str) -> (&str, &str) {
+pub(crate) fn split_url(url: &str) -> (&str, &str) {
     let rest = url
         .strip_prefix("ws://")
         .or_else(|| url.strip_prefix("wss://"))

@@ -10,7 +10,8 @@
 //! with `generate_pyarrow_parquet_files.py`. They cover the page layouts
 //! parquet-cpp writes by default (Snappy, dictionary encoding, DataPageV1,
 //! multiple row groups) plus the DataPageV2 layouts with and without
-//! dictionaries.
+//! dictionaries. One further fixture, written by Polars, covers dictionaries
+//! with one entry, which Polars encodes with an index bit width of 0.
 
 #[cfg(feature = "parquet")]
 mod pyarrow_parquet_tests {
@@ -328,6 +329,26 @@ mod pyarrow_parquet_tests {
         assert_eq!(
             float64_values(&table, "score"),
             [Some(85.5), Some(92.0), Some(78.3), Some(95.1), Some(88.7)]
+        );
+    }
+
+    /// Dictionary-encoded columns with one dictionary entry, written by
+    /// Polars, which stores their indices with a bit width of 0. The fixture
+    /// was produced from `rust/` with Polars 1.44.2:
+    ///
+    /// ```text
+    /// python -c "import polars as pl; pl.DataFrame({'zeros': pl.Series([0, 0, 0, 0, 0], dtype=pl.Int32), 'label': ['a', 'a', 'a', 'a', 'a'], 'sparse': pl.Series([7, None, 7, None, 7], dtype=pl.Int64)}).write_parquet('pyarrow-roundtrip/polars_single_entry_dictionary.parquet', compression='uncompressed')"
+    /// ```
+    #[test]
+    fn reads_polars_single_entry_dictionary_columns() {
+        let table =
+            load_parquet_table(open("polars_single_entry_dictionary.parquet")).expect("read");
+        assert_eq!(table.n_rows, 5);
+        assert_eq!(int32_values(&table, "zeros"), [Some(0); 5]);
+        assert_eq!(string_values(&table, "label"), [(); 5].map(|_| Some("a".to_owned())));
+        assert_eq!(
+            int64_values(&table, "sparse"),
+            [Some(7), None, Some(7), None, Some(7)]
         );
     }
 }

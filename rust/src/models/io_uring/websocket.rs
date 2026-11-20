@@ -24,9 +24,8 @@ use crate::models::codecs::lightstream::LightstreamCodec;
 use crate::models::decoders::limits::DecodeLimits;
 use crate::models::frames::lightstream_message::{FRAME_HEADER_SIZE, LightstreamMessage};
 use crate::models::frames::websocket::{
-    self, MAX_HEADER_LEN, OPCODE_BINARY, OPCODE_CLOSE, OPCODE_PING, OPCODE_PONG,
+    self, MAX_HEADER_LEN, OPCODE_BINARY, OPCODE_CLOSE, OPCODE_PING, OPCODE_PONG, fresh_mask_key,
 };
-use crate::models::streams::websocket::fresh_mask_key;
 
 use super::buf::UringBuf;
 

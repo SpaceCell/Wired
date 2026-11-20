@@ -28,14 +28,19 @@ fn run(check: fn(&str)) {
 }
 
 #[test]
-fn object_urls_outside_a_runtime_context_report_an_error() {
-    let err = StorageReader::open(format!("{BASE}/no-runtime/a.bin"))
-        .err()
-        .expect("no runtime context");
-    assert!(
-        err.to_string().contains("Tokio runtime context"),
-        "got {err}"
-    );
+fn object_urls_outside_a_runtime_context_run_on_the_process_runtime() {
+    use std::io::{Read, Write};
+
+    use lightstream::models::writers::object_storage::StorageWriter;
+
+    let url = format!("{BASE}/no-runtime/a.bin");
+    let mut writer = StorageWriter::create(&url).unwrap();
+    writer.write_all(b"process runtime").unwrap();
+    writer.flush().unwrap();
+
+    let mut read = Vec::new();
+    StorageReader::open(&url).unwrap().read_to_end(&mut read).unwrap();
+    assert_eq!(read, b"process runtime");
 }
 
 #[test]

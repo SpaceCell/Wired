@@ -28,7 +28,8 @@ use tokio::task::JoinHandle;
 
 use crate::object_storage::connection::ObjectLocation;
 use crate::object_storage::error::io_error;
-use crate::object_storage::runtime::{current_handle, run_task};
+use crate::object_storage::runtime::run_task;
+use crate::runtime;
 
 /// Upload of one object, driven by synchronous writes.
 ///
@@ -59,7 +60,7 @@ impl ObjectUpload {
     pub(crate) fn new(location: ObjectLocation) -> io::Result<Self> {
         Ok(Self {
             location,
-            runtime: current_handle()?,
+            runtime: runtime::handle()?,
             pending: Vec::new(),
             multipart: None,
             parts: VecDeque::new(),

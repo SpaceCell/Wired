@@ -35,10 +35,10 @@ use object_store::path::Path as ObjectPath;
 #[cfg(any(feature = "aws", feature = "gcp", feature = "azure", feature = "https"))]
 use object_store::{ClientConfigKey, ClientOptions};
 use object_store::{ObjectStore, ObjectStoreScheme};
-use tokio::runtime::Handle;
 use url::{Position, Url};
 
 use crate::object_storage::error::io_error;
+use crate::runtime;
 
 /// Default size of each multipart upload part, in bytes. S3 requires every
 /// part except the last to be at least this size, and it is the minimum
@@ -189,10 +189,10 @@ pub(crate) fn resolve(url: &str) -> io::Result<ObjectLocation> {
         });
     }
 
-    let runtime = Handle::try_current()
-        .map(|handle| handle.id().to_string())
-        .unwrap_or_default();
-    let key = format!("{}|{prefix}|{runtime}", &parsed[..Position::BeforePath]);
+    // Requests made through the store run on the runtime from
+    // `runtime::handle`, and the key holds that runtime's identifier.
+    let runtime_id = runtime::handle()?.id().to_string();
+    let key = format!("{}|{prefix}|{runtime_id}", &parsed[..Position::BeforePath]);
 
     let mut stores = STORES.lock().expect("object storage store cache lock");
     let store = match stores.get(&key) {
