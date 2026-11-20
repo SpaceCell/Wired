@@ -110,6 +110,8 @@ writer.close()
 
 The listener remains available for the lifetime of the process. Connections arriving while a serving loop is active wait in the listener backlog, allowing the accepting endpoint to operate as a persistent server.
 
+For the `ws`, `wss`, `http`, `https` and `wt` schemes, the URL path is part of the endpoint. Accepting calls on `ws://0.0.0.0:9910/prices` and `ws://0.0.0.0:9910/trades` share the port, and each receives only the connections made to its own path. Connections to a path that no accepting call has bound are refused. A URL without a path is the path `/`. Endpoints on one host and port share a single TLS certificate, because TLS is established before the path is known.
+
 ### TLS
 
 QUIC and WebTransport include TLS at the protocol level. The accepting endpoint presents a PEM certificate and private key, while the connecting endpoint verifies the certificate using PEM roots.

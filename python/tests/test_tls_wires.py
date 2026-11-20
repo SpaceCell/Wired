@@ -174,6 +174,65 @@ def test_https_accepting_reader(tls_pair):
     run_accepting_reader(f"https://127.0.0.1:{free_port()}/ingest", cert, key, ca)
 
 
+def serve_two_paths(base, cert, key):
+    """Serves a different table on `/prices` and `/trades` of one authority."""
+
+    def serve(path, offset):
+        writer = ls.write(f"{base}{path}", accept=True, tls_cert=cert, tls_key=key)
+        writer.write(sample_table(offset))
+        writer.close()
+
+    threads = [
+        threading.Thread(target=serve, args=(path, offset), daemon=True)
+        for path, offset in [("/prices", 0), ("/trades", 100)]
+    ]
+    for thread in threads:
+        thread.start()
+    return threads
+
+
+def read_path(uri, ca, deadline=30.0):
+    """Reads every batch an accepting writer sends on a URL path, retrying
+    until the writer has bound the path."""
+    end = time.monotonic() + deadline
+    while True:
+        try:
+            batches = list(ls.read(uri, tls_ca=ca))
+            if batches:
+                return batches
+        except ls.LightstreamError:
+            if time.monotonic() > end:
+                raise
+        assert time.monotonic() < end, f"no batches arrived from {uri}"
+        time.sleep(0.05)
+
+
+def run_two_paths(base, cert, key, ca):
+    threads = serve_two_paths(base, cert, key)
+    trades = read_path(f"{base}/trades", ca)
+    prices = read_path(f"{base}/prices", ca)
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+    assert [pa.table(b).to_pydict() for b in prices] == [sample_table(0).to_pydict()]
+    assert [pa.table(b).to_pydict() for b in trades] == [sample_table(100).to_pydict()]
+
+
+def test_wss_accepting_writers_on_two_paths_serve_their_own_tables(tls_pair):
+    cert, key, ca = tls_pair
+    run_two_paths(f"wss://127.0.0.1:{free_port()}", cert, key, ca)
+
+
+def test_https_accepting_writers_on_two_paths_serve_their_own_tables(tls_pair):
+    cert, key, ca = tls_pair
+    run_two_paths(f"https://127.0.0.1:{free_port()}", cert, key, ca)
+
+
+def test_webtransport_accepting_writers_on_two_paths_serve_their_own_tables(tls_pair):
+    cert, key, ca = tls_pair
+    run_two_paths(f"wt://127.0.0.1:{free_port()}", cert, key, ca)
+
+
 def test_wss_lightstream_round_trip(tls_pair):
     cert, key, ca = tls_pair
     uri = f"wss://127.0.0.1:{free_port()}"

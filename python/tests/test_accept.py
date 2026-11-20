@@ -130,6 +130,94 @@ def test_http_arrow_accepting_reader():
     run_accepting_reader(f"http://127.0.0.1:{free_port()}/ingest")
 
 
+def read_path(uri, deadline=30.0, **options):
+    """Reads every batch an accepting writer sends on a URL path.
+
+    Retries until the writer has bound the path. A request for a path
+    that is not yet bound is refused without being served, therefore a
+    retry never consumes another path's connection.
+    """
+    end = time.monotonic() + deadline
+    while True:
+        try:
+            batches = list(ls.read(uri, **options))
+            if batches:
+                return batches
+        except ls.LightstreamError:
+            if time.monotonic() > end:
+                raise
+        assert time.monotonic() < end, f"no batches arrived from {uri}"
+        time.sleep(0.05)
+
+
+def run_accepting_writers_on_two_paths(base, **server_options):
+    """Serves a different table on `/prices` and `/trades` of one authority."""
+
+    def serve(path, offset):
+        writer = ls.write(f"{base}{path}", accept=True, **server_options)
+        writer.write(sample_table(offset))
+        writer.close()
+
+    threads = [
+        threading.Thread(target=serve, args=(path, offset), daemon=True)
+        for path, offset in [("/prices", 0), ("/trades", 100)]
+    ]
+    for thread in threads:
+        thread.start()
+    return threads
+
+
+def assert_two_paths_served(base, threads, **client_options):
+    trades = read_path(f"{base}/trades", **client_options)
+    prices = read_path(f"{base}/prices", **client_options)
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+    assert [pa.table(b).to_pydict() for b in prices] == [sample_table(0).to_pydict()]
+    assert [pa.table(b).to_pydict() for b in trades] == [sample_table(100).to_pydict()]
+
+
+def test_ws_accepting_writers_on_two_paths_serve_their_own_tables():
+    base = f"ws://127.0.0.1:{free_port()}"
+    threads = run_accepting_writers_on_two_paths(base)
+    assert_two_paths_served(base, threads)
+
+
+def test_http_accepting_writers_on_two_paths_serve_their_own_tables():
+    base = f"http://127.0.0.1:{free_port()}"
+    threads = run_accepting_writers_on_two_paths(base)
+    assert_two_paths_served(base, threads)
+
+
+def test_ws_accepting_readers_on_two_paths_receive_their_own_tables():
+    base = f"ws://127.0.0.1:{free_port()}"
+    result = {}
+
+    def serve(path):
+        result[path] = list(ls.read(f"{base}{path}", accept=True))
+
+    threads = [
+        threading.Thread(target=serve, args=(path,), daemon=True)
+        for path in ["/prices", "/trades"]
+    ]
+    for thread in threads:
+        thread.start()
+
+    # A write to a path that is not yet bound is refused, and the retry
+    # opens a new connection.
+    for path, offset in [("/trades", 100), ("/prices", 0)]:
+        writer = ls.write(f"{base}{path}")
+        with_retries(lambda: writer.write(sample_table(offset)))
+        writer.close()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+    assert [pa.table(b).to_pydict() for b in result["/prices"]] == [sample_table(0).to_pydict()]
+    assert [pa.table(b).to_pydict() for b in result["/trades"]] == [
+        sample_table(100).to_pydict()
+    ]
+
+
 def test_tcp_lightstream_accepting_reader():
     uri = f"tcp://127.0.0.1:{free_port()}"
     result = {}

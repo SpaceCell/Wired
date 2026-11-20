@@ -606,10 +606,7 @@ pub fn resolve_source(
                             // Lightstream TLV bytes ride inside WebSocket
                             // binary frames, parsed by the WsRead adapter.
                             if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::ws(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::ws(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (read_half, write_half) =
@@ -639,10 +636,7 @@ pub fn resolve_source(
                         }
                         Endpoint::Http(url) => {
                             if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::http(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::http(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (recv_read, mut send_write) =
@@ -741,10 +735,7 @@ pub fn resolve_source(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::wss_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::wss(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::wss(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (read_half, write_half) =
@@ -783,10 +774,7 @@ pub fn resolve_source(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::https_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::https(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::https(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (recv_read, mut send_write) =
@@ -851,10 +839,7 @@ pub fn resolve_source(
                         }
                         Endpoint::Ws(url) => {
                             if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::ws(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::ws(url.as_str()))?;
                                 runtime()
                                     .block_on(WebSocketTableReader::accept(&listener, None))
                             } else {
@@ -870,10 +855,7 @@ pub fn resolve_source(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::wss_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::wss(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::wss(url.as_str()))?;
                                 runtime().block_on(async {
                                     let (read_half, write_half) =
                                         WebSocketTransport::accept_tls(&listener, config).await?;
@@ -899,10 +881,7 @@ pub fn resolve_source(
                         }
                         Endpoint::Http(url) => {
                             if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::http(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::http(url.as_str()))?;
                                 runtime().block_on(HttpTableReader::accept(&listener, None))
                             } else {
                                 runtime().block_on(HttpTableReader::get(url.as_str(), None))
@@ -916,10 +895,7 @@ pub fn resolve_source(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::https_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::https(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::https(url.as_str()))?;
                                 runtime().block_on(async {
                                     let (recv_read, send_write) =
                                         HttpTransport::accept_tls(&listener, config).await?;
@@ -1343,10 +1319,7 @@ pub fn resolve_target(
                             // Lightstream TLV bytes ride inside WebSocket
                             // binary frames, built by the WsWrite adapter.
                             if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::ws(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::ws(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (_read_half, write_half) =
@@ -1377,10 +1350,7 @@ pub fn resolve_target(
                             // task, reaching its clean end without resetting
                             // the h2 stream.
                             if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::http(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::http(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (mut recv_read, send_write) =
@@ -1483,10 +1453,7 @@ pub fn resolve_target(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::wss_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::wss(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::wss(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (_read_half, write_half) =
@@ -1526,10 +1493,7 @@ pub fn resolve_target(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::https_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::https(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::https(url.as_str()))?;
                                 runtime()
                                     .block_on(async {
                                         let (mut recv_read, send_write) =
@@ -1609,10 +1573,7 @@ pub fn resolve_target(
                         }
                         Endpoint::Ws(url) => {
                             let link = if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::ws(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::ws(url.as_str()))?;
                                 let halves = runtime()
                                     .block_on(WebSocketTransport::accept(&listener))
                                     .map_err(|e| to_py_err(IoError::Io(e)))?;
@@ -1632,10 +1593,7 @@ pub fn resolve_target(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::wss_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::wss(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::wss(url.as_str()))?;
                                 let halves = runtime()
                                     .block_on(WebSocketTransport::accept_tls(&listener, config))
                                     .map_err(|e| to_py_err(IoError::Io(e)))?;
@@ -1654,10 +1612,7 @@ pub fn resolve_target(
                         }
                         Endpoint::Http(url) => {
                             let link = if accept {
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::http(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::http(url.as_str()))?;
                                 let halves = runtime()
                                     .block_on(HttpTransport::accept(&listener))
                                     .map_err(|e| to_py_err(IoError::Io(e)))?;
@@ -1677,10 +1632,7 @@ pub fn resolve_target(
                                 let key = tls_key.expect("validated above");
                                 let config = tls::https_server(Path::new(cert), Path::new(key))
                                     .map_err(|e| TransportError::new_err(e.to_string()))?;
-                                let listener = {
-                                    let _guard = runtime().enter();
-                                    listeners::https(url.as_str())?
-                                };
+                                let listener = runtime().block_on(listeners::https(url.as_str()))?;
                                 let halves = runtime()
                                     .block_on(HttpTransport::accept_tls(&listener, config))
                                     .map_err(|e| to_py_err(IoError::Io(e)))?;

@@ -34,7 +34,10 @@ async fn serve() -> io::Result<()> {
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     let config = tls::wt_server(addr, &args::tls_cert(), &args::tls_key()).await?;
-    let listener = WebTransport::bind(config)?;
+    // WebTransport sessions are requested over HTTPS. The endpoint URL
+    // therefore uses the `https` scheme with the URI's authority and path.
+    let rest = uri.split_once("://").map_or(uri.as_str(), |(_, rest)| rest);
+    let listener = WebTransport::bind(&format!("https://{rest}"), config)?;
     let table = datagen::get_table();
     let schema = datagen::schema(&table);
     println!("Serving get_table on {uri}");
