@@ -40,7 +40,6 @@
 //! [`SyncWsRead`]: crate::models::streams::sync_websocket::SyncWsRead
 
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use minarrow::{Field, SuperTable, Table, Vec64};
@@ -49,7 +48,7 @@ use crate::enums::{BufferChunkSize, IPCMessageProtocol};
 use crate::models::decoders::limits::DecodeLimits;
 use crate::models::readers::ipc::sync_table::SyncTableReader;
 use crate::models::streams::sync_websocket::{SyncWsRead, SyncWsWrite};
-use crate::models::transports::sync_websocket::SyncWebSocketTransport;
+use crate::models::transports::sync_websocket::{SyncWebSocketListener, SyncWebSocketTransport};
 
 /// Read-side type of [`SyncWebSocketTableReader`]. Boxing the
 /// [`SyncWsRead`] lets every constructor return the same struct type for
@@ -81,13 +80,16 @@ impl SyncWebSocketTableReader {
         ))
     }
 
-    /// Accept the next inbound connection, run the server upgrade
-    /// handshake, and return a table reader over it.
+    /// Accept the next inbound connection to the listener's path, run the
+    /// server upgrade handshake, and return a table reader over it.
     ///
     /// Serves the accepting peer role. The caller binds the listener,
     /// e.g. via `SyncWebSocketTransport::bind`, and holds it across
     /// connections. Uses `IPCMessageProtocol::Stream`.
-    pub fn accept(listener: &TcpListener, limits: Option<DecodeLimits>) -> io::Result<Self> {
+    pub fn accept(
+        listener: &SyncWebSocketListener,
+        limits: Option<DecodeLimits>,
+    ) -> io::Result<Self> {
         let (read_half, write_half) = SyncWebSocketTransport::accept(listener)?;
         Ok(Self::from_halves(
             read_half,

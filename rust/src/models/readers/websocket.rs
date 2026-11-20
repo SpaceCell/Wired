@@ -49,13 +49,12 @@ use std::task::{Context, Poll};
 
 use futures_core::Stream;
 use minarrow::{Field, SuperTable, Table, Vec64};
-use tokio::net::TcpListener;
 
 use crate::enums::{BufferChunkSize, IPCMessageProtocol};
 use crate::models::readers::ipc::table::TableReader;
 use crate::models::decoders::limits::DecodeLimits;
 use crate::models::streams::websocket::{WsRead, WsWrite};
-use crate::models::transports::websocket::WebSocketTransport;
+use crate::models::transports::websocket::{WebSocketListener, WebSocketTransport};
 use crate::traits::transport_reader::IPCTransportReader;
 
 /// Async Arrow IPC reader over a WebSocket connection.
@@ -90,14 +89,14 @@ impl WebSocketTableReader {
         Ok(Self { inner })
     }
 
-    /// Accept the next inbound connection, run the server upgrade
-    /// handshake, and return a table reader over it.
+    /// Accept the next inbound connection to the listener's path, run the
+    /// server upgrade handshake, and return a table reader over it.
     ///
     /// Serves the accepting peer role. The caller binds the listener,
     /// e.g. via `WebSocketTransport::bind`, and holds it across
     /// connections. Uses `IPCMessageProtocol::Stream`.
     pub async fn accept(
-        listener: &TcpListener,
+        listener: &WebSocketListener,
         limits: Option<DecodeLimits>,
     ) -> io::Result<Self> {
         let (read_half, write_half) = WebSocketTransport::accept(listener).await?;

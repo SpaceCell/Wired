@@ -145,6 +145,23 @@ writer.write_table(batch_1)?;
 writer.finish()?;
 ```
 
+**URL endpoints**
+
+WebSocket, HTTP/2 and WebTransport endpoints are URLs, and the path is part of the endpoint. `bind` returns a listener for the URL's path, and listeners for several paths on one scheme, host and port share a single socket in the process. Each listener's `accept` returns only the connections made to its own path, and connections to an unbound path are refused with status `404 Not Found`. Binding a URL that is already bound returns `AddrInUse`, and dropping a listener unbinds its path.
+
+```rust
+use lightstream::models::readers::websocket::WebSocketTableReader;
+use lightstream::models::transports::websocket::WebSocketTransport;
+
+let prices = WebSocketTransport::bind("ws://0.0.0.0:9910/prices").await?;
+let trades = WebSocketTransport::bind("ws://0.0.0.0:9910/trades").await?;
+
+// Receives only the connections made to `/prices`.
+let reader = WebSocketTableReader::accept(&prices, None).await?;
+```
+
+TLS is established before the path is known, therefore endpoints on one host and port share a single TLS identity.
+
 **Memory-mapped Arrow IPC**
 
 The mmap reader is very fast. Warm mmap rivals standalone RAM speed, as it gets out the way.

@@ -479,6 +479,10 @@ pub mod models {
         /// WebTransport Transport.
         #[cfg(feature = "webtransport")]
         pub mod webtransport;
+
+        /// Path routing for the transports with URL endpoints.
+        #[cfg(any(feature = "websocket", feature = "http", feature = "webtransport"))]
+        pub(crate) mod routing;
     }
 
     /// Stream adapters and sources.

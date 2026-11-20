@@ -28,13 +28,13 @@ use bytes::Bytes;
 use futures_util::sink::SinkExt;
 use http::{Method, Request, Uri};
 use minarrow::{Field, TableV};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
 use crate::compression::Compression;
 use crate::enums::IPCMessageProtocol;
 use crate::models::sinks::table_sink::TableSink64;
 use crate::models::streams::http::{H2RecvRead, H2SendWrite};
-use crate::models::transports::http::HttpTransport;
+use crate::models::transports::http::{HttpListener, HttpTransport};
 use crate::traits::transport_writer::IPCTransportWriter;
 
 /// Async Arrow IPC writer over an HTTP/2 POST request body.
@@ -109,8 +109,8 @@ impl HttpTableWriter {
         Self::from_send_stream(send_stream, response_fut, schema, compression)
     }
 
-    /// Accept the next inbound exchange and prepare to write Arrow IPC
-    /// tables into its response body.
+    /// Accept the next inbound exchange for the listener's path and prepare
+    /// to write Arrow IPC tables into its response body.
     ///
     /// Serves the accepting peer role. The caller binds the listener,
     /// e.g. via `HttpTransport::bind`, and holds it across connections.
@@ -118,7 +118,7 @@ impl HttpTableWriter {
     /// drains it to its clean end while the response streams out. Pass
     /// `None` for `compression` to write uncompressed batches.
     pub async fn accept(
-        listener: &TcpListener,
+        listener: &HttpListener,
         schema: Vec<Field>,
         compression: Option<Compression>,
     ) -> io::Result<Self> {

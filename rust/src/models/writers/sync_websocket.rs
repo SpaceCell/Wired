@@ -22,7 +22,7 @@
 //!
 //! Both peer roles are supported. [`SyncWebSocketTableWriter::connect`]
 //! reaches a listening `ws://` URL, and [`SyncWebSocketTableWriter::accept`]
-//! serves the next inbound connection on a bound `TcpListener`.
+//! serves the next inbound connection on a bound `SyncWebSocketListener`.
 //!
 //! ## Security
 //!
@@ -35,14 +35,13 @@
 //! [`SyncWsWrite`]: crate::models::streams::sync_websocket::SyncWsWrite
 
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
 
 use minarrow::{Field, Table, TableV, Vec64};
 
 use crate::compression::Compression;
 use crate::models::sinks::sync_table_sink::SyncTableSink;
 use crate::models::streams::sync_websocket::SyncWsWrite;
-use crate::models::transports::sync_websocket::SyncWebSocketTransport;
+use crate::models::transports::sync_websocket::{SyncWebSocketListener, SyncWebSocketTransport};
 
 /// Write half of [`SyncWebSocketTableWriter`]. Boxing the underlying
 /// `std::io::Write` lets every constructor return the same struct type for
@@ -78,15 +77,16 @@ impl SyncWebSocketTableWriter {
         Ok(Self { sink })
     }
 
-    /// Accept the next inbound connection, run the server upgrade
-    /// handshake, and prepare to write Arrow IPC tables to it.
+    /// Accept the next inbound connection to the listener's path, run the
+    /// server upgrade handshake, and prepare to write Arrow IPC tables to
+    /// it.
     ///
     /// Serves the accepting peer role. The caller binds the listener,
     /// e.g. via `SyncWebSocketTransport::bind`, and holds it across
     /// connections. Pass `None` for `compression` to write
     /// uncompressed batches.
     pub fn accept(
-        listener: &TcpListener,
+        listener: &SyncWebSocketListener,
         schema: Vec<Field>,
         compression: Option<Compression>,
     ) -> io::Result<Self> {

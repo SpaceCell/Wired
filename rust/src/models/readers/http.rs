@@ -40,13 +40,13 @@ use futures_core::Stream;
 use http::{Request, Uri};
 use minarrow::{Field, SuperTable, Table, Vec64};
 use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
 use crate::enums::{BufferChunkSize, IPCMessageProtocol};
 use crate::models::readers::ipc::table::TableReader;
 use crate::models::decoders::limits::DecodeLimits;
 use crate::models::streams::http::{H2RecvRead, H2SendWrite, HttpByteStream};
-use crate::models::transports::http::HttpTransport;
+use crate::models::transports::http::{HttpListener, HttpTransport};
 use crate::traits::transport_reader::IPCTransportReader;
 
 /// Async Arrow IPC reader over an HTTP/2 GET response body.
@@ -132,8 +132,8 @@ impl HttpTableReader {
         Self { inner }
     }
 
-    /// Accept the next inbound exchange and return a table reader over
-    /// its request body.
+    /// Accept the next inbound exchange for the listener's path and return
+    /// a table reader over its request body.
     ///
     /// Serves the accepting peer role. The caller binds the listener,
     /// e.g. via `HttpTransport::bind`, and holds it across connections.
@@ -141,7 +141,7 @@ impl HttpTableReader {
     /// ended with a clean h2 half-close and the exchange continues on
     /// the request body alone.
     pub async fn accept(
-        listener: &TcpListener,
+        listener: &HttpListener,
         limits: Option<DecodeLimits>,
     ) -> io::Result<Self> {
         let (recv_read, send_write) = HttpTransport::accept(listener).await?;

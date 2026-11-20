@@ -21,7 +21,7 @@
 
 use std::io::{self, Write};
 use std::net::TcpListener;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 
 use futures_util::StreamExt;
@@ -34,7 +34,10 @@ use lightstream::models::frames::websocket::{
 use lightstream::models::readers::sync_websocket::SyncWebSocketTableReader;
 use lightstream::models::readers::websocket::WebSocketTableReader;
 use lightstream::models::streams::sync_websocket::{SyncWsRead, SyncWsWrite};
-use lightstream::models::transports::sync_websocket::SyncWebSocketTransport;
+use lightstream::models::transports::sync_websocket::{
+    SyncWebSocketListener, SyncWebSocketTransport,
+};
+use lightstream::models::transports::websocket::{WebSocketListener, WebSocketTransport};
 use lightstream::models::writers::sync_websocket::SyncWebSocketTableWriter;
 use lightstream::models::writers::websocket::WebSocketTableWriter;
 use lightstream::traits::transport_reader::IPCTransportReader;
@@ -159,8 +162,10 @@ enum Listening {
 
 /// Connection role of one peer.
 enum Endpoint {
-    Connect(String),
-    Accept(TcpListener),
+    /// Connects to the URL the accepting peer sends once it has bound.
+    Connect(mpsc::Receiver<String>),
+    /// Binds a loopback URL, sends it to the connecting peer, and accepts.
+    Accept(mpsc::Sender<String>),
 }
 
 fn current_thread_runtime() -> tokio::runtime::Runtime {
@@ -171,15 +176,18 @@ fn current_thread_runtime() -> tokio::runtime::Runtime {
 }
 
 /// Bind a loopback listener and return it with its `ws://` URL.
-fn bind_local() -> (TcpListener, String) {
+fn bind_local() -> (SyncWebSocketListener, String) {
     let listener = SyncWebSocketTransport::bind("ws://127.0.0.1:0").unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
     (listener, url)
 }
 
-fn to_tokio_listener(listener: TcpListener) -> io::Result<tokio::net::TcpListener> {
-    listener.set_nonblocking(true)?;
-    tokio::net::TcpListener::from_std(listener)
+/// Bind a loopback listener for the async transport and return it with its
+/// `ws://` URL. Call within the runtime that accepts on it.
+async fn bind_local_async() -> (WebSocketListener, String) {
+    let listener = WebSocketTransport::bind("ws://127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    (listener, url)
 }
 
 fn write_tables(
@@ -194,9 +202,12 @@ fn write_tables(
             // The sync writer registers dictionaries from categorical columns.
             let mut writer = match endpoint {
                 Endpoint::Connect(url) => {
-                    SyncWebSocketTableWriter::connect(&url, schema, compression).unwrap()
+                    SyncWebSocketTableWriter::connect(&url.recv().unwrap(), schema, compression)
+                        .unwrap()
                 }
-                Endpoint::Accept(listener) => {
+                Endpoint::Accept(url) => {
+                    let (listener, local_url) = bind_local();
+                    url.send(local_url).unwrap();
                     SyncWebSocketTableWriter::accept(&listener, schema, compression).unwrap()
                 }
             };
@@ -204,11 +215,14 @@ fn write_tables(
         }
         Side::Async => current_thread_runtime().block_on(async move {
             let mut writer = match endpoint {
-                Endpoint::Connect(url) => WebSocketTableWriter::connect(&url, schema, compression)
-                    .await
-                    .unwrap(),
-                Endpoint::Accept(listener) => {
-                    let listener = to_tokio_listener(listener).unwrap();
+                Endpoint::Connect(url) => {
+                    WebSocketTableWriter::connect(&url.recv().unwrap(), schema, compression)
+                        .await
+                        .unwrap()
+                }
+                Endpoint::Accept(url) => {
+                    let (listener, local_url) = bind_local_async().await;
+                    url.send(local_url).unwrap();
                     WebSocketTableWriter::accept(&listener, schema, compression)
                         .await
                         .unwrap()
@@ -231,16 +245,25 @@ fn read_tables(
     match side {
         Side::Sync => {
             let reader = match endpoint {
-                Endpoint::Connect(url) => SyncWebSocketTableReader::connect(&url, limits)?,
-                Endpoint::Accept(listener) => SyncWebSocketTableReader::accept(&listener, limits)?,
+                Endpoint::Connect(url) => {
+                    SyncWebSocketTableReader::connect(&url.recv().unwrap(), limits)?
+                }
+                Endpoint::Accept(url) => {
+                    let (listener, local_url) = bind_local();
+                    url.send(local_url).unwrap();
+                    SyncWebSocketTableReader::accept(&listener, limits)?
+                }
             };
             reader.read_all_tables()
         }
         Side::Async => current_thread_runtime().block_on(async move {
             let reader = match endpoint {
-                Endpoint::Connect(url) => WebSocketTableReader::connect(&url, limits).await?,
-                Endpoint::Accept(listener) => {
-                    let listener = to_tokio_listener(listener)?;
+                Endpoint::Connect(url) => {
+                    WebSocketTableReader::connect(&url.recv().unwrap(), limits).await?
+                }
+                Endpoint::Accept(url) => {
+                    let (listener, local_url) = bind_local_async().await;
+                    url.send(local_url).unwrap();
                     WebSocketTableReader::accept(&listener, limits).await?
                 }
             };
@@ -259,12 +282,12 @@ fn transfer(
     compression: Option<Compression>,
     limits: Option<DecodeLimits>,
 ) -> io::Result<Vec<Table>> {
-    let (listener, url) = bind_local();
+    let (url_tx, url_rx) = mpsc::channel();
     let schema = schema_of(&tables[0]);
 
     let (writer_end, reader_end) = match listening {
-        Listening::Writer => (Endpoint::Accept(listener), Endpoint::Connect(url)),
-        Listening::Reader => (Endpoint::Connect(url), Endpoint::Accept(listener)),
+        Listening::Writer => (Endpoint::Accept(url_tx), Endpoint::Connect(url_rx)),
+        Listening::Reader => (Endpoint::Connect(url_rx), Endpoint::Accept(url_tx)),
     };
 
     let writer_thread =
@@ -444,22 +467,25 @@ fn capture_messages(
     tables: Vec<Table>,
     compression: Option<Compression>,
 ) -> Vec<(u8, Vec<u8>)> {
-    let (listener, url) = bind_local();
+    let (url_tx, url_rx) = mpsc::channel();
     let schema = schema_of(&tables[0]);
-    let (writer_end, reader_listener) = match listening {
-        Listening::Writer => (Endpoint::Accept(listener), None),
-        Listening::Reader => (Endpoint::Connect(url.clone()), Some(listener)),
+    let (writer_end, reader_end) = match listening {
+        Listening::Writer => (Endpoint::Accept(url_tx), Endpoint::Connect(url_rx)),
+        Listening::Reader => (Endpoint::Connect(url_rx), Endpoint::Accept(url_tx)),
     };
     let writer_thread =
         thread::spawn(move || write_tables(writer, writer_end, schema, tables, compression));
 
-    let mut ws_read = match reader_listener {
-        Some(listener) => {
+    let mut ws_read = match reader_end {
+        Endpoint::Accept(url) => {
+            let (listener, local_url) = bind_local();
+            url.send(local_url).unwrap();
             let (read_half, write_half) = SyncWebSocketTransport::accept(&listener).unwrap();
             let (shared, _ws_write) = SyncWsWrite::new(write_half);
             SyncWsRead::new(read_half, shared)
         }
-        None => {
+        Endpoint::Connect(url) => {
+            let url = url.recv().unwrap();
             let (read_half, write_half) = SyncWebSocketTransport::connect(&url).unwrap();
             let (shared, _ws_write) = SyncWsWrite::new_client(write_half);
             SyncWsRead::new_client(read_half, shared)
@@ -541,7 +567,8 @@ fn sync_transport_reads_text_and_binary_messages_from_a_connecting_peer() {
 
 #[test]
 fn sync_transport_reads_messages_from_an_accepting_peer() {
-    let (listener, url) = bind_local();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
     let peer = thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         let mut socket = tungstenite::accept(stream).unwrap();
@@ -696,4 +723,117 @@ fn sync_ws_write_closes_once_and_rejects_later_writes() {
     ws_write.close().unwrap();
     assert_eq!(ws_write.write(b"late").unwrap_err().kind(), io::ErrorKind::Other);
     assert_eq!(*shared.lock().unwrap(), [0x82, 2, b'o', b'k', 0x88, 2, 0x03, 0xE8]);
+}
+
+/// Bind `/prices` on a free port, then `/trades` on the same authority.
+fn bind_two_paths() -> (SyncWebSocketListener, SyncWebSocketListener, String) {
+    let prices = SyncWebSocketTransport::bind("ws://127.0.0.1:0/prices").unwrap();
+    let base = format!("ws://{}", prices.local_addr().unwrap());
+    let trades = SyncWebSocketTransport::bind(&format!("{base}/trades")).unwrap();
+    assert_eq!(trades.local_addr().unwrap(), prices.local_addr().unwrap());
+    (prices, trades, base)
+}
+
+/// Connect to `url`, write one table of `n_rows` rows and finish.
+fn send_table(url: &str, n_rows: usize) {
+    let table = make_large_table(n_rows);
+    let mut writer = SyncWebSocketTableWriter::connect(url, schema_of(&table), None).unwrap();
+    writer.write_table(table).unwrap();
+    writer.finish().unwrap();
+}
+
+/// Accept one connection on `listener` and return the row counts it sends.
+fn receive_rows(listener: &SyncWebSocketListener) -> Vec<usize> {
+    let reader = SyncWebSocketTableReader::accept(listener, None).unwrap();
+    reader
+        .read_all_tables()
+        .unwrap()
+        .iter()
+        .map(|table| table.n_rows)
+        .collect()
+}
+
+#[test]
+fn listeners_on_one_authority_receive_their_own_paths() {
+    let (prices, trades, base) = bind_two_paths();
+
+    // Only the `/prices` listener accepts at first, therefore it upgrades
+    // the `/trades` connection and holds it for `/trades`.
+    let prices_server = thread::spawn(move || receive_rows(&prices));
+    send_table(&format!("{base}/trades"), 5);
+    send_table(&format!("{base}/prices"), 3);
+    assert_eq!(prices_server.join().unwrap(), [3]);
+    assert_eq!(receive_rows(&trades), [5]);
+}
+
+#[test]
+fn listeners_on_one_authority_accept_concurrently() {
+    let (prices, trades, base) = bind_two_paths();
+    let prices_server = thread::spawn(move || receive_rows(&prices));
+    let trades_server = thread::spawn(move || receive_rows(&trades));
+    send_table(&format!("{base}/prices"), 3);
+    send_table(&format!("{base}/trades"), 5);
+    assert_eq!(prices_server.join().unwrap(), [3]);
+    assert_eq!(trades_server.join().unwrap(), [5]);
+}
+
+#[test]
+fn upgrades_to_unbound_paths_are_refused() {
+    let listener = SyncWebSocketTransport::bind("ws://127.0.0.1:0/prices").unwrap();
+    let base = format!("ws://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || receive_rows(&listener));
+
+    let error = SyncWebSocketTransport::connect(&format!("{base}/missing")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+
+    send_table(&format!("{base}/prices"), 4);
+    assert_eq!(server.join().unwrap(), [4]);
+}
+
+#[test]
+fn url_without_a_path_is_the_root_path() {
+    let (listener, url) = bind_local();
+    let error = SyncWebSocketTransport::bind(&format!("{url}/"))
+        .err()
+        .expect("the root path is bound");
+    assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+
+    let server = thread::spawn(move || receive_rows(&listener));
+    send_table(&format!("{url}/"), 2);
+    assert_eq!(server.join().unwrap(), [2]);
+}
+
+#[test]
+fn binding_bound_urls_returns_addr_in_use() {
+    let (_prices, _trades, base) = bind_two_paths();
+    for path in ["/prices", "/trades"] {
+        let error = SyncWebSocketTransport::bind(&format!("{base}{path}"))
+            .err()
+            .expect("the path is bound");
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse, "{path}");
+    }
+}
+
+#[test]
+fn dropped_listeners_unbind_their_paths_and_the_last_frees_the_port() {
+    let (prices, trades, base) = bind_two_paths();
+    let addr = prices.local_addr().unwrap();
+    drop(trades);
+    let trades = SyncWebSocketTransport::bind(&format!("{base}/trades")).unwrap();
+    drop(trades);
+    drop(prices);
+    TcpListener::bind(addr).unwrap();
+}
+
+#[test]
+fn upgrades_to_dropped_paths_are_refused() {
+    let (prices, trades, base) = bind_two_paths();
+    drop(trades);
+    let server = thread::spawn(move || receive_rows(&prices));
+
+    let error = SyncWebSocketTransport::connect(&format!("{base}/trades")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+
+    send_table(&format!("{base}/prices"), 6);
+    assert_eq!(server.join().unwrap(), [6]);
 }
