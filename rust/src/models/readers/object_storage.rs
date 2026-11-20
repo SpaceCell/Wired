@@ -45,9 +45,9 @@ use futures_util::TryStreamExt;
 use object_store::{ObjectMeta, ObjectStoreExt};
 
 #[cfg(feature = "object_storage")]
-use crate::object_storage::{
-    ObjectLocation, current_handle, io_error, object_url, resolve, run_task,
-};
+use crate::object_storage::{ObjectLocation, io_error, object_url, resolve, run_task};
+#[cfg(feature = "object_storage")]
+use crate::runtime;
 
 /// Sequential reader over a local file or a fetched object.
 ///
@@ -69,7 +69,7 @@ impl StorageReader {
         #[cfg(feature = "object_storage")]
         if let Some(url) = object_url(path.as_ref()) {
             let ObjectLocation { store, path, .. } = resolve(&url)?;
-            let bytes = run_task(&current_handle()?, async move {
+            let bytes = run_task(&runtime::handle()?, async move {
                 store.get(&path).await?.bytes().await
             })?
             .map_err(io_error)?;
@@ -162,7 +162,7 @@ impl StorageSource {
             let location = resolve(&url)?;
             let store = Arc::clone(&location.store);
             let object = location.path.clone();
-            let meta = run_task(&current_handle()?, async move { store.head(&object).await })?
+            let meta = run_task(&runtime::handle()?, async move { store.head(&object).await })?
                 .map_err(io_error)?;
             return Ok(Self::Object {
                 location,
@@ -195,7 +195,7 @@ impl StorageSource {
                 let range = offset..offset + buf.len() as u64;
                 let store = Arc::clone(&location.store);
                 let object = location.path.clone();
-                let bytes = run_task(&current_handle()?, async move {
+                let bytes = run_task(&runtime::handle()?, async move {
                     store.get_range(&object, range).await
                 })?
                 .map_err(io_error)?;
@@ -232,7 +232,7 @@ pub fn list_dir<P: AsRef<Path>>(dir: P) -> io::Result<Vec<PathBuf>> {
     #[cfg(feature = "object_storage")]
     if let Some(url) = object_url(dir.as_ref()) {
         let ObjectLocation { store, path, .. } = resolve(&url)?;
-        let listing = run_task(&current_handle()?, async move {
+        let listing = run_task(&runtime::handle()?, async move {
             store.list_with_delimiter(Some(&path)).await
         })?
         .map_err(io_error)?;
@@ -261,7 +261,7 @@ pub fn list_files<P: AsRef<Path>>(dir: P) -> io::Result<Vec<PathBuf>> {
         let location = resolve(&url)?;
         let store = Arc::clone(&location.store);
         let prefix = location.path.clone();
-        let objects: Vec<ObjectMeta> = run_task(&current_handle()?, async move {
+        let objects: Vec<ObjectMeta> = run_task(&runtime::handle()?, async move {
             store.list(Some(&prefix)).try_collect().await
         })?
         .map_err(io_error)?;
